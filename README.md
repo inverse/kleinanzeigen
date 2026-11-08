@@ -1,15 +1,21 @@
 # kleinanzeigen
 
-Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de) backed by
-plain HTTP (curl_cffi + BeautifulSoup) — no Playwright, no browser. Ships a CLI
-and an MCP server on top of the same client.
+[![PyPI version](https://img.shields.io/pypi/v/kleinanzeigen)](https://pypi.org/project/kleinanzeigen/)
+[![Python](https://img.shields.io/pypi/pyversions/kleinanzeigen)](https://pypi.org/project/kleinanzeigen/)
+[![CI](https://github.com/inverse/kleinanzeigen/actions/workflows/ci.yml/badge.svg)](https://github.com/inverse/kleinanzeigen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Requires Python 3.11+.
+Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de) over plain
+HTTP (`curl_cffi` + BeautifulSoup) - no Playwright, no browser. Ships a CLI and an
+MCP server on the same client.
 
-Based off the work done in [ebay-kleinanzeigen-api](https://github.com/DanielWTE/ebay-kleinanzeigen-api/) and ported to run without a browser.
+Tested on Python 3.14 and 3.15.
+
+Based on the work in [ebay-kleinanzeigen-api](https://github.com/DanielWTE/ebay-kleinanzeigen-api/),
+ported to run without a browser.
 
 > **Note:** this scrapes kleinanzeigen.de without a browser. Pages are fetched
-> sequentially with delays to be polite - don't hammer it, and check
+> sequentially with delays to stay polite - don't hammer it, and check
 > kleinanzeigen.de's terms of service for your use case.
 
 ## Install
@@ -54,7 +60,7 @@ async def main():
             SearchParams(query="fahrrad", published_after=datetime(2026, 1, 1))
         )
 
-        # single ad, by URL or bare id — None when the ad is gone
+        # single ad, by URL or bare id - None when the ad is gone
         detail = await ka.get_listing("123456789")
         if detail:
             print(detail.title, detail.price.amount, detail.seller.name, detail.images)
@@ -89,7 +95,7 @@ numeric price, e.g. "VB" or "Zu verschenken"; `negotiable` flags "VB"),
 Installed as `kleinanzeigen`:
 
 ```sh
-# keyword search — all pages by default; Rich table with live spinner
+# keyword search - all pages by default; Rich table with live spinner
 kleinanzeigen search -q "fahrrad" -l "Berlin" --radius 5 --pages 3
 
 # filters; --json prints raw JSON instead of the table
@@ -98,7 +104,7 @@ kleinanzeigen search -q "iphone" --min-price 100 --max-price 500 --json
 # scrape a saved/filtered search URL
 kleinanzeigen search-url "https://www.kleinanzeigen.de/s-suche/foo.html" --pages 3
 
-# single ad by URL or bare id — prints JSON; exits 1 when the ad is gone
+# single ad by URL or bare id - prints JSON; exits 1 when the ad is gone
 kleinanzeigen get 123456789
 ```
 
@@ -115,7 +121,7 @@ date/datetime). Responses are typed `SearchResponse` (`listings`,
 `total_results`, `total_pages`, `pages_fetched`, `returned`) or
 `ListingDetail`; a missing ad returns `{"error": "listing not found or removed"}`.
 
-Add the following to your mcp json:
+Add the server to your MCP client config:
 
 ```json
 {
@@ -132,7 +138,7 @@ From a source checkout: `uv run kleinanzeigen-mcp`.
 ## Notes
 
 - Pages are fetched **sequentially** with a delay (`page_delay`, default 1s;
-  `search_url` enforces at least 2s) — Kleinanzeigen blocks concurrent
+  `search_url` enforces at least 2s) - Kleinanzeigen blocks concurrent
   requests from one IP.
 - `published_after` stops pagination early once older listings appear and
   trims them from results. Upstream timestamps are naive Europe/Berlin.
