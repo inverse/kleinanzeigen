@@ -1,0 +1,11 @@
+[tools]
+python = "3.15.2"
+pre-commit = "latest"
+uv = "0.12.21"
+
+[hooks]
+postinstall = "pre-commit install"
+
+[tasks.test]
+description = "Run tests"
+run = "uv run pytest"
