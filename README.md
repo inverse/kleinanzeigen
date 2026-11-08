@@ -17,8 +17,12 @@ Based off the work done in [ebay-kleinanzeigen-api](https://github.com/DanielWTE
 ```bash
 # With uv
 uv add kleinanzeigen
+
 # With pip
 pip install kleinanzeigen
+
+# With pipx
+pipx install kleinanzeigen
 ```
 
 ## Library
@@ -111,7 +115,7 @@ date/datetime). Responses are typed `SearchResponse` (`listings`,
 `total_results`, `total_pages`, `pages_fetched`, `returned`) or
 `ListingDetail`; a missing ad returns `{"error": "listing not found or removed"}`.
 
-Claude Desktop-style config:
+Add the following to your mcp json:
 
 ```json
 {
