@@ -4,8 +4,6 @@
       "command": "uv",
       "args": [
         "run",
-        "--project",
-        "/home/malachi/code/python/kleinanzeigen",
         "kleinanzeigen-mcp"
       ]
     }

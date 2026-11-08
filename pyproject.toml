@@ -3,7 +3,7 @@ name = "kleinanzeigen"
 version = "0.1.0"
 description = "Async client for querying kleinanzeigen.de over plain HTTP (no browser)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = { text = "MIT" }
 dependencies = [
     "beautifulsoup4>=4.12",

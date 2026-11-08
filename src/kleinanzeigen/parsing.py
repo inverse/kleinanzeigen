@@ -85,7 +85,7 @@ def parse_listing_date(text: str | None) -> datetime | None:
             return datetime(yesterday.year, yesterday.month, yesterday.day, h, m)
         d, mo, y = text.split(".")
         return datetime(int(y), int(mo), int(d))
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         return None
 
 
@@ -152,7 +152,7 @@ def parse_ad_previews(html_text: str) -> dict[str, dict[str, Any]]:
     for raw in _ASTRO_PROPS_RE.findall(html_text):
         try:
             props = json.loads(html_lib.unescape(raw))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if isinstance(props, dict):
             _collect_ad_nodes(
@@ -230,7 +230,7 @@ def extract_jsonld_title(article: Tag) -> str | None:
         return None
     try:
         data = json.loads(raw)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
     if isinstance(data, list):
         data = data[0] if data else None
