@@ -6,10 +6,11 @@ import html as html_lib
 import json
 import math
 import re
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
-from urllib.parse import unquote, urlencode, urlparse, urlunparse
+from urllib.parse import unquote, urlencode, urljoin, urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup, Tag
@@ -29,8 +30,8 @@ _DATE_RE = re.compile(r"^((Heute|Gestern),\s*\d{1,2}:\d{2}|\d{2}\.\d{2}\.\d{4})$
 _ZIP_RE = re.compile(r"\b\d{5}\b")
 _KM_ONLY_RE = re.compile(r"^\(\d+(?:[.,]\d+)?\s*km\)$")
 _DISTANCE_RE = re.compile(r"\s*\((\d+(?:[.,]\d+)?)\s*km\)\s*$")
-_PAGE_SEGMENT_RE = re.compile(r"^(s-seite:\d+|seite:\d+)$")
-_FILTER_SEGMENT_RE = re.compile(r"^k?\d*c\d+")
+_PAGE_SEGMENT_RE = re.compile(r"^(s-seite|seite):(\d+)$")
+_PAGE_LINK_RE = re.compile(r"(?<=/)((?:s-seite|seite):)(\d+)")
 _ASTRO_PROPS_RE = re.compile(r"""<astro-island[^>]*props='([^']*sortingDate[^']*)'""")
 _AD_DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
 
@@ -297,26 +298,61 @@ def extract_listing(
 
 
 def inject_page(url: str, page_num: int) -> str:
-    """Set the page number on a Kleinanzeigen search URL.
+    """Set the page number on a URL that already carries a page segment.
 
-    Category URLs get 'seite:N' inserted before the filter segment
-    (k?\\d*c\\d+); generic searches get 's-seite:N' appended. Existing page
-    segments are stripped first.
+    Replaces the first 's-seite:N'/'seite:N' path segment in place and drops
+    any others: the site's canonical pagination keeps that segment mid-path
+    (e.g. '/s-seite:2/fahrrad/k0'), so removing it yields a non-search URL.
+    A URL without a page segment already serves page 1; requesting another
+    page raises ValueError — discover page URLs from the page's own
+    pagination links instead (see pagination_url_for).
     """
     parsed = urlparse(url)
-    path = unquote(parsed.path)
-    segments = [
-        s for s in path.strip("/").split("/") if s and not _PAGE_SEGMENT_RE.match(s)
-    ]
-    if page_num > 1:
-        filter_idx = next(
-            (i for i, s in enumerate(segments) if _FILTER_SEGMENT_RE.match(s)), None
+    segments = [s for s in unquote(parsed.path).strip("/").split("/") if s]
+    replaced = False
+    kept: list[str] = []
+    for segment in segments:
+        match = _PAGE_SEGMENT_RE.match(segment)
+        if match is None:
+            kept.append(segment)
+        elif not replaced:
+            kept.append(f"{match.group(1)}:{page_num}")
+            replaced = True
+    if not replaced and page_num != 1:
+        raise ValueError(
+            "URL has no page segment; it already serves page 1. "
+            "Use pagination_url_for() on a fetched page for page 2+."
         )
-        if filter_idx is not None:
-            segments.insert(filter_idx, f"seite:{page_num}")
-        else:
-            segments.append(f"s-seite:{page_num}")
-    return urlunparse(parsed._replace(path="/" + "/".join(segments)))
+    return urlunparse(parsed._replace(path="/" + "/".join(kept)))
+
+
+def pagination_url_for(
+    soup: BeautifulSoup, *, base_url: str
+) -> Callable[[int], str] | None:
+    """Build ``url_for(page)`` from a search page's own pagination links.
+
+    Page URLs cannot be derived from the input URL — the site canonicalizes
+    them ('/s-fahrrad/k0' paginates as '/s-seite:2/fahrrad/k0',
+    '/s-autos/k0c216' as '/s-autos/seite:2/autos/k0c216'). Returns None when
+    the page has no pagination links (single page of results).
+    """
+    candidates: list[tuple[int, str]] = []
+    for anchor in soup.select("a[href]"):
+        href = anchor.get("href")
+        if not isinstance(href, str) or "seite" not in href:
+            continue
+        absolute = urljoin(base_url, href)
+        match = _PAGE_LINK_RE.search(urlparse(absolute).path)
+        if match:
+            candidates.append((int(match.group(2)), absolute))
+    if not candidates:
+        return None
+    _, template = min(candidates, key=lambda candidate: candidate[0])
+
+    def url_for(page: int) -> str:
+        return _PAGE_LINK_RE.sub(rf"\g<1>{page}", template, count=1)
+
+    return url_for
 
 
 def build_search_url(
