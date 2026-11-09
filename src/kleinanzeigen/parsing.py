@@ -501,6 +501,8 @@ def _extract_status(title_raw: str, title_node: Any, soup: BeautifulSoup) -> AdS
 def extract_detail(
     soup: BeautifulSoup, url: str, scraped_at: datetime | None
 ) -> ListingDetail:
+    if soup.select_one("#viewad-title") is None:
+        raise ValueError(f"unexpected non-ad page for {url}")
     ad_id = _inner(soup.select_one("#viewad-ad-id-box > ul > li:nth-child(2)"))
 
     categories = [

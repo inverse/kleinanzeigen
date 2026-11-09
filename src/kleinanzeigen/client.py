@@ -94,12 +94,16 @@ class Kleinanzeigen:
     ) -> tuple[list[Listing], tuple[int | None, int | None]]:
         for attempt in range(3):
             html, soup, _ = await self._fetch(url)
-            listings = []
+            if soup.select_one("#srp-breadcrumb-summary") is None:
+                raise KleinanzeigenError(
+                    f"unexpected non-search page for {url} (blocked or error page)"
+                )
             previews = parsing.parse_ad_previews(html)
-            for card in soup.select("article[data-adid]"):
-                listing = parsing.extract_listing(card, previews)
-                if listing is not None:
-                    listings.append(listing)
+            listings = [
+                listing
+                for card in soup.select("article[data-adid]")
+                if (listing := parsing.extract_listing(card, previews)) is not None
+            ]
             if listings or attempt == 2:
                 break
             await asyncio.sleep(3.0)
@@ -248,4 +252,9 @@ class Kleinanzeigen:
         ):
             return None
 
-        return parsing.extract_detail(soup, url=final_url, scraped_at=datetime.now(UTC))
+        try:
+            return parsing.extract_detail(
+                soup, url=final_url, scraped_at=datetime.now(UTC)
+            )
+        except ValueError as exc:
+            raise KleinanzeigenError(str(exc)) from exc
