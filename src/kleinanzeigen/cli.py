@@ -274,9 +274,9 @@ def _print_table(
 ) -> None:
     listings = result.listings
     if query is not None:
-        parts = [f"'{query}'"]
+        parts = [f"'{escape(query)}'"]
         if location:
-            parts.append(f"in '{location}'")
+            parts.append(f"in '{escape(location)}'")
         if radius is not None:
             parts.append(f"(radius: {radius} km)")
         if min_price is not None or max_price is not None:
@@ -308,14 +308,14 @@ def _print_table(
     )
 
     for item in listings:
-        title = item.title.replace("\n", " ").strip()
-        display_title = f"[link={item.url}]{title}[/link]"
+        title = escape(item.title.replace("\n", " ").strip())
+        display_title = f"[link={escape(item.url)}]{title}[/link]"
         price = f"{item.price} €" if item.price is not None else "—"
         dist = f"{item.distance_km:g} km" if item.distance_km is not None else "—"
         table.add_row(
             display_title,
             price,
-            item.location or "—",
+            escape(item.location) or "—",
             dist,
             _format_age(item.published_at),
         )

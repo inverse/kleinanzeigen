@@ -195,6 +195,8 @@ class Kleinanzeigen:
     async def _iter_search_url(
         self, url: str, *, pages: int
     ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
+        if pages < 0:
+            raise ValueError("pages must be >= 0 (0 = all pages)")
         delay = max(self._page_delay, 2.0)
         listings, (total, total_pages), soup, final_url = await self._fetch_search_page(
             parsing.inject_page(url, 1), want_breadcrumb=True
