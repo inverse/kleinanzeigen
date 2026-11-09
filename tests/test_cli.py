@@ -130,7 +130,7 @@ def test_print_table_escapes_markup(capsys):
         pages_fetched=1,
     )
     cli._print_table(result, query="bike [/]")
-    rendered = capsys.readouterr().out
+    rendered = _strip_ansi(capsys.readouterr().out)
     assert "Bike [/] [cheap]" in rendered
     assert "Berlin [bold]" in rendered
     assert "bike [/]" in rendered
