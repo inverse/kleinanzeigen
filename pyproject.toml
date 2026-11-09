@@ -1,6 +1,6 @@
 [project]
 name = "kleinanzeigen"
-version = "0.1.0"
+version = "0.1.1"
 description = "Async client for querying kleinanzeigen.de over plain HTTP (no browser)"
 readme = "README.md"
 requires-python = ">=3.14"
