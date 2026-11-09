@@ -9,10 +9,12 @@ from rich.console import Console
 
 from kleinanzeigen import cli
 from kleinanzeigen.models import (
+    Listing,
     ListingDetail,
     Location,
     Price,
     SearchParams,
+    SearchResult,
     Seller,
 )
 
@@ -106,3 +108,27 @@ def test_iter_search_url_rejects_negative_pages():
     # Drive the async generator manually: it raises before the first await.
     with pytest.raises(ValueError, match="pages must be >= 0"):
         it.asend(None).send(None)
+def test_print_table_escapes_markup(capsys):
+    result = SearchResult(
+        listings=[
+            Listing(
+                ad_id="1",
+                url="https://www.kleinanzeigen.de/s-anzeige/x/1",
+                title="Bike [/] [cheap]",
+                price=100,
+                location="Berlin [bold]",
+                distance_km=None,
+                description="",
+                published_at=None,
+                is_top_ad=False,
+            )
+        ],
+        total_results=1,
+        total_pages=1,
+        pages_fetched=1,
+    )
+    cli._print_table(result, query="bike [/]")
+    rendered = capsys.readouterr().out
+    assert "Bike [/] [cheap]" in rendered
+    assert "Berlin [bold]" in rendered
+    assert "bike [/]" in rendered
