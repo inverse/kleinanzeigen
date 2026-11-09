@@ -121,7 +121,13 @@ class Kleinanzeigen:
         or once ``total_pages`` (from the first page's breadcrumb) is passed.
         ``page_delay`` overrides the inter-page delay. Callers wanting
         ``published_after`` filtering should stop iterating early.
+
+        Raises ValueError for out-of-range page bounds.
         """
+        if first_page < 1:
+            raise ValueError("first_page must be >= 1")
+        if pages < 0:
+            raise ValueError("pages must be >= 0 (0 = all pages)")
         delay = self._page_delay if page_delay is None else page_delay
         total_pages: int | None = None
         breadcrumb_page = first_page

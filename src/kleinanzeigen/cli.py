@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import click
 import humanize
+from pydantic import ValidationError
 from rich.console import Console, Group
 from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -30,6 +31,19 @@ from kleinanzeigen.models import (
 )
 
 console = Console()
+
+
+class _IsoDateTime(click.ParamType):
+    name = "datetime"
+
+    def convert(self, value, param, ctx):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            self.fail(f"{value!r} is not a valid ISO date/datetime", param, ctx)
+
+
+ISO_DATETIME = _IsoDateTime()
 
 
 def _search_pages_iter(
@@ -132,17 +146,24 @@ def cli() -> None:
 @click.option(
     "--location", "-l", default=None, help="Location (e.g. 'Berlin' or 'Mitte')"
 )
-@click.option("--radius", type=int, default=None, help="Radius in km")
-@click.option("--min-price", type=int, default=None, help="Min price in EUR")
-@click.option("--max-price", type=int, default=None, help="Max price in EUR")
-@click.option("--pages", type=int, default=0, help="Pages to fetch (0 = all)")
-@click.option("--page", type=int, default=1, help="Starting page")
+@click.option("--radius", type=click.IntRange(min=0), default=None, help="Radius in km")
+@click.option(
+    "--min-price", type=click.IntRange(min=0), default=None, help="Min price in EUR"
+)
+@click.option(
+    "--max-price", type=click.IntRange(min=0), default=None, help="Max price in EUR"
+)
+@click.option(
+    "--pages", type=click.IntRange(min=0), default=0, help="Pages to fetch (0 = all)"
+)
+@click.option("--page", type=click.IntRange(min=1), default=1, help="Starting page")
 @click.option(
     "--json", "json_out", is_flag=True, help="Print raw JSON instead of a table"
 )
 @click.option(
     "--published-after",
     default=None,
+    type=ISO_DATETIME,
     help="Drop listings older than this ISO date/datetime (naive = Europe/Berlin)",
 )
 def search(
@@ -154,21 +175,22 @@ def search(
     pages: int,
     page: int,
     json_out: bool,
-    published_after: str | None,
+    published_after: datetime | None,
 ) -> None:
     """Keyword search."""
-    params = SearchParams(
-        query=query,
-        location=location,
-        radius=radius,
-        min_price=min_price,
-        max_price=max_price,
-        page=page,
-        pages=pages,
-        published_after=(
-            datetime.fromisoformat(published_after) if published_after else None
-        ),
-    )
+    try:
+        params = SearchParams(
+            query=query,
+            location=location,
+            radius=radius,
+            min_price=min_price,
+            max_price=max_price,
+            page=page,
+            pages=pages,
+            published_after=published_after,
+        )
+    except ValidationError as exc:
+        raise click.UsageError(exc.errors()[0]["msg"]) from exc
     result = _run_iter_search(
         params,
         first_page=page,
@@ -191,17 +213,20 @@ def search(
 
 @cli.command("search-url")
 @click.argument("url")
-@click.option("--pages", type=int, default=1, help="Number of pages to fetch")
+@click.option(
+    "--pages", type=click.IntRange(min=0), default=1, help="Number of pages to fetch"
+)
 @click.option(
     "--json", "json_out", is_flag=True, help="Print raw JSON instead of a table"
 )
 @click.option(
     "--published-after",
     default=None,
+    type=ISO_DATETIME,
     help="Drop listings older than this ISO date/datetime (naive = Europe/Berlin)",
 )
 def search_url_cmd(
-    url: str, pages: int, json_out: bool, published_after: str | None
+    url: str, pages: int, json_out: bool, published_after: datetime | None
 ) -> None:
     """Scrape a saved/filtered kleinanzeigen.de search URL."""
     result = _run_iter_search(
@@ -209,9 +234,7 @@ def search_url_cmd(
         first_page=1,
         pages=pages,
         show_progress=not json_out,
-        published_after=(
-            datetime.fromisoformat(published_after) if published_after else None
-        ),
+        published_after=published_after,
     )
     if json_out:
         click.echo(search_response_json(result))
