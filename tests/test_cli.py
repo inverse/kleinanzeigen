@@ -108,6 +108,8 @@ def test_iter_search_url_rejects_negative_pages():
     # Drive the async generator manually: it raises before the first await.
     with pytest.raises(ValueError, match="pages must be >= 0"):
         it.asend(None).send(None)
+
+
 def test_print_table_escapes_markup(capsys):
     result = SearchResult(
         listings=[
