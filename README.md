@@ -8,113 +8,129 @@
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://github.com/python/mypy)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de) over plain
-HTTP (`curl_cffi` + BeautifulSoup) - no Playwright, no browser. Ships a CLI and an
-MCP server in the same package.
+Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de), using
+plain HTTP with curl_cffi and BeautifulSoup. No browser required.
 
-Tested on Python 3.14 and 3.15.
+Search listings and fetch ad details through an [async library](#library),
+a [CLI](#cli), or an [MCP server](#mcp-server).
 
-Based on the work in [ebay-kleinanzeigen-api](https://github.com/DanielWTE/ebay-kleinanzeigen-api/),
-ported to run without a browser.
+Requests are made sequentially with delays between pages. Check
+kleinanzeigen.de's terms of service before use.
 
-> **Note:** this scrapes kleinanzeigen.de without a browser. Pages are fetched
-> sequentially with delays to stay polite - don't hammer it, and check
-> kleinanzeigen.de's terms of service for your use case.
+## Requirements
 
-## Install
+- Python 3.14 or later.
 
-```bash
-# With uv
+## Installation
+
+Add the package to your Python project:
+
+```sh
 uv add kleinanzeigen
+```
 
-# With pip
+Or install it with pip:
+
+```sh
 pip install kleinanzeigen
+```
 
-# With pipx
+For standalone CLI and MCP commands, install with pipx:
+
+```sh
 pipx install kleinanzeigen
 ```
 
 ## Library
 
+Use `Kleinanzeigen` as an async context manager to manage the HTTP session.
+Searches return a `SearchResult` with listings and pagination totals;
+single-ad lookups return a `ListingDetail` or `None` if the ad is gone.
+
+### Search and fetch listings
+
 ```python
 import asyncio
-from datetime import datetime
 
 from kleinanzeigen import Kleinanzeigen, SearchParams
 
 
 async def main():
     async with Kleinanzeigen() as ka:
-        # keyword search; pages=0 fetches all pages
         result = await ka.search(
             SearchParams(query="fahrrad", location="Berlin", radius=25, pages=2)
         )
         for listing in result.listings:
             print(listing.title, listing.price, listing.url)
-        print(result.total_results, result.total_pages, result.pages_fetched)
 
-        # any saved/filtered search URL (page numbers injected automatically)
-        result = await ka.search_url(
-            "https://www.kleinanzeigen.de/s-suche/foo.html", pages=3
-        )
-
-        # drop listings older than a cutoff (naive = Europe/Berlin)
-        result = await ka.search(
-            SearchParams(query="fahrrad", published_after=datetime(2026, 1, 1))
-        )
-
-        # single ad, by URL or bare id - None when the ad is gone
         detail = await ka.get_listing("123456789")
-        if detail:
-            print(detail.title, detail.price.amount, detail.seller.name, detail.images)
-
-        # streaming progress: yields (PageProgress, listings) per page
-        async for progress, page_listings in ka.iter_search(
-            SearchParams(query="fahrrad")
-        ):
-            print(progress.page, progress.total_pages, len(page_listings))
+        if detail is not None:
+            print(detail.title, detail.price.amount, detail.seller.name)
 
 
 asyncio.run(main())
 ```
 
+### Saved searches and date cutoffs
+
+Within the same async context, reuse a filtered search URL or restrict results
+by publish date. Naive datetimes are interpreted as Europe/Berlin local time.
+
+```python
+from datetime import datetime
+
+result = await ka.search_url("https://www.kleinanzeigen.de/s-fahrrad/k0", pages=3)
+
+result = await ka.search(
+    SearchParams(query="fahrrad", published_after=datetime(2026, 1, 1), pages=2)
+)
+```
+
+### Page-by-page results
+
+Use `iter_search()` or `iter_search_url()` to process each page as it arrives,
+within the same async context:
+
+```python
+async for progress, listings in ka.iter_search(SearchParams(query="fahrrad", pages=2)):
+    print(progress.page, progress.total_pages)
+    for listing in listings:
+        print(listing.title, listing.url)
+```
+
+Set `pages=0` to fetch all available pages. Keyword searches default to all
+pages; URL searches default to one.
+
 ## CLI
 
-Installed as `kleinanzeigen`:
+Search from the terminal with progress updates and a results table. Use
+`--json` on search commands for machine-readable output; `get` displays
+formatted ad details and exits with status 1 if the ad is gone.
 
 ```sh
-# keyword search - all pages by default; Rich table with live spinner
-kleinanzeigen search -q "fahrrad" -l "Berlin" --radius 5 --pages 3
+# Search by keyword and location
+kleinanzeigen search -q 'fahrrad' -l 'Berlin' --radius 5 --pages 3
 
-# filters; --json prints raw JSON instead of the table
-kleinanzeigen search -q "iphone" --min-price 100 --max-price 500 --json
+# Filter by price and return JSON
+kleinanzeigen search -q 'iphone' --min-price 100 --max-price 500 --pages 1 --json
 
-# scrape a saved/filtered search URL
-kleinanzeigen search-url "https://www.kleinanzeigen.de/s-suche/foo.html" --pages 3
+# Use a saved or filtered search URL
+kleinanzeigen search-url 'https://www.kleinanzeigen.de/s-fahrrad/k0' --pages 3
 
-# single ad by URL or bare id - prints JSON; exits 1 when the ad is gone
+# Fetch a single ad by URL or numeric ID
 kleinanzeigen get 123456789
 ```
 
-`search` options: `-q/--query` (required), `-l/--location`, `--radius`,
-`--min-price`, `--max-price`, `--page`, `--pages`, `--published-after`,
-`--json`. `search-url` accepts `--pages`, `--published-after`, `--json`.
-
 ## MCP server
 
-Installed as `kleinanzeigen-mcp` (stdio). Search tools take the same arguments
-as the library plus a `limit` cap on returned listings; both accept
-`published_after` (ISO date/datetime). Responses are typed `SearchResponse`
-(`listings`, `total_results`, `total_pages`, `pages_fetched`, `returned`) or
-`ListingDetail`; a missing ad returns `{"error": "listing not found or removed"}`.
+Connect an MCP-compatible client to the `kleinanzeigen-mcp` server to search
+listings and retrieve ad details. The server uses the stdio transport.
 
-| Tool | Arguments | Description |
-| --- | --- | --- |
-| `search` | `query`*, `location`, `radius`, `min_price`, `max_price`, `page`, `pages`, `published_after`, `limit` | Keyword search; `pages=0` fetches all pages |
-| `search_url` | `url`*, `pages`, `published_after`, `limit` | Scrape a saved/filtered search URL |
-| `get_listing` | `url_or_id`* | Single ad by URL or bare ad id |
-
-`*` required. `search` defaults: `page=1`, `pages=0`.
+| Tool | Description |
+| --- | --- |
+| `search` | Search listings by keyword, location, and price. |
+| `search_url` | Search using a saved or filtered Kleinanzeigen URL. |
+| `get_listing` | Fetch full ad details by URL or numeric ID. |
 
 Add the server to your MCP client config:
 
@@ -128,31 +144,31 @@ Add the server to your MCP client config:
 }
 ```
 
+Both search tools support publish-date filtering and a `limit` on returned
+listings. Results include listings, pagination totals, and a `returned` count.
+Missing ads return `{"error": "listing not found or removed"}`.
 
 ## Development
 
-```sh
-uv sync                  # install deps into .venv
-uv run pytest            # offline test suite
-pre-commit run -a        # lint + format
+Set up the environment and run the offline tests and lint checks:
 
-# run the CLI from source (same commands as the installed `kleinanzeigen`)
-uv run kleinanzeigen search -q "fahrrad" --pages 1
+```sh
+uv sync
+uv run pytest
+pre-commit run -a
 ```
 
-The repo ships a `.mcp.json` that registers `kleinanzeigen-dev` as an MCP
-server running `uv run kleinanzeigen-mcp` from this checkout - MCP clients
-(Claude Code, etc.) pick it up automatically when opened in this directory.
+Run the CLI directly from the checkout:
 
-## Notes
+```sh
+uv run kleinanzeigen search -q 'fahrrad' --pages 1
+```
 
-- Pages are fetched **sequentially** with a delay (`page_delay`, default 1s;
-  `search_url` enforces at least 2s) - Kleinanzeigen blocks concurrent
-  requests from one IP.
-- `published_after` stops pagination early once older listings appear and
-  trims them from results. Upstream timestamps are naive Europe/Berlin.
-- `search`/`search_url` return `SearchResult` (`listings`, `total_results`,
-  `total_pages`, `pages_fetched`); `get_listing` returns `ListingDetail` or
-  `None`.
-- Transient HTTP errors are retried (`max_retries`, exponential backoff);
-  exhausted retries raise `KleinanzeigenError`.
+The included `.mcp.json` registers `kleinanzeigen-dev` using
+`uv run kleinanzeigen-mcp`. MCP clients that support project-level
+configuration can load it from this checkout.
+
+## Acknowledgements
+
+Based on [ebay-kleinanzeigen-api](https://github.com/DanielWTE/ebay-kleinanzeigen-api/),
+adapted to work without a browser.
