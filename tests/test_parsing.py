@@ -3,6 +3,7 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from bs4 import BeautifulSoup
 
 from kleinanzeigen import parsing
@@ -34,17 +35,63 @@ def test_parse_breadcrumb(search_html):
 
 
 def test_inject_page():
+    # Canonical paginated URLs: the page segment is replaced in place.
     assert (
-        parsing.inject_page("https://www.kleinanzeigen.de/s-autos/seite:3/k0c216", 2)
-        == "https://www.kleinanzeigen.de/s-autos/seite:2/k0c216"
+        parsing.inject_page("https://www.kleinanzeigen.de/s-seite:3/fahrrad/k0", 2)
+        == "https://www.kleinanzeigen.de/s-seite:2/fahrrad/k0"
     )
     assert (
-        parsing.inject_page("https://www.kleinanzeigen.de/s-markt/?q=foo", 2)
-        == "https://www.kleinanzeigen.de/s-markt/s-seite:2?q=foo"
+        parsing.inject_page(
+            "https://www.kleinanzeigen.de/s-autos/seite:3/autos/k0c216", 5
+        )
+        == "https://www.kleinanzeigen.de/s-autos/seite:5/autos/k0c216"
     )
+    # Page-1 normalization keeps paginated URLs usable.
     assert (
-        parsing.inject_page("https://www.kleinanzeigen.de/s-markt/?q=foo", 1)
-        == "https://www.kleinanzeigen.de/s-markt?q=foo"
+        parsing.inject_page("https://www.kleinanzeigen.de/s-seite:3/fahrrad/k0", 1)
+        == "https://www.kleinanzeigen.de/s-seite:1/fahrrad/k0"
+    )
+    # A URL without a page segment already serves page 1.
+    assert (
+        parsing.inject_page("https://www.kleinanzeigen.de/s-fahrrad/k0", 1)
+        == "https://www.kleinanzeigen.de/s-fahrrad/k0"
+    )
+    # Deeper pages are not derivable — they come from pagination links.
+    with pytest.raises(ValueError):
+        parsing.inject_page("https://www.kleinanzeigen.de/s-fahrrad/k0", 2)
+
+
+def test_pagination_url_for():
+    html = """
+    <html><body>
+      <a href="/s-seite:2/fahrrad/k0">2</a>
+      <a href="/s-seite:3/fahrrad/k0">3</a>
+      <a href="/s-unternehmensseiten-verzeichnis.html">other</a>
+    </body></html>
+    """
+    url_for = parsing.pagination_url_for(
+        BeautifulSoup(html, "html.parser"),
+        base_url="https://www.kleinanzeigen.de/s-fahrrad/k0",
+    )
+    assert url_for is not None
+    assert url_for(7) == "https://www.kleinanzeigen.de/s-seite:7/fahrrad/k0"
+
+    # Category-style pagination keeps 'seite:' mid-path.
+    html = '<a href="/s-autos/seite:2/autos/k0c216">2</a>'
+    url_for = parsing.pagination_url_for(
+        BeautifulSoup(html, "html.parser"),
+        base_url="https://www.kleinanzeigen.de/s-autos/k0c216",
+    )
+    assert url_for is not None
+    assert url_for(4) == "https://www.kleinanzeigen.de/s-autos/seite:4/autos/k0c216"
+
+    # No pagination links -> single page of results.
+    assert (
+        parsing.pagination_url_for(
+            BeautifulSoup("<p>nothing</p>", "html.parser"),
+            base_url="https://www.kleinanzeigen.de/",
+        )
+        is None
     )
 
 

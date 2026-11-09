@@ -91,9 +91,9 @@ class Kleinanzeigen:
 
     async def _fetch_search_page(
         self, url: str, *, want_breadcrumb: bool
-    ) -> tuple[list[Listing], tuple[int | None, int | None]]:
+    ) -> tuple[list[Listing], tuple[int | None, int | None], BeautifulSoup, str]:
         for attempt in range(3):
-            html, soup, _ = await self._fetch(url)
+            html, soup, final_url = await self._fetch(url)
             listings = []
             previews = parsing.parse_ad_previews(html)
             for card in soup.select("article[data-adid]"):
@@ -104,7 +104,7 @@ class Kleinanzeigen:
                 break
             await asyncio.sleep(3.0)
         breadcrumb = parsing.parse_breadcrumb(soup) if want_breadcrumb else (None, None)
-        return listings, breadcrumb
+        return listings, breadcrumb, soup, final_url
 
     async def iter_search_pages(
         self,
@@ -137,7 +137,7 @@ class Kleinanzeigen:
             if p > first_page:
                 await asyncio.sleep(delay)
 
-            page_listings, (total, tp) = await self._fetch_search_page(
+            page_listings, (total, tp), _, _ = await self._fetch_search_page(
                 url_for(p), want_breadcrumb=(p == breadcrumb_page)
             )
             if p == breadcrumb_page:
@@ -174,15 +174,34 @@ class Kleinanzeigen:
     ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
         """Page iterator for a saved/filtered search URL.
 
-        Enforces a >= 2s inter-page delay; saved searches hit a different path
-        shape that Kleinanzeigen rate-limits harder.
+        Page 1 fetches the URL as given (normalized to page 1); later pages
+        reuse the pagination links from the fetched page, since Kleinanzeigen
+        canonicalizes page URLs. Enforces a >= 2s inter-page delay; saved
+        searches hit a different path shape that Kleinanzeigen rate-limits
+        harder.
         """
-        return self.iter_search_pages(
-            lambda p: parsing.inject_page(url, p),
-            first_page=1,
-            pages=pages,
-            page_delay=max(self._page_delay, 2.0),
+        return self._iter_search_url(url, pages=pages)
+
+    async def _iter_search_url(
+        self, url: str, *, pages: int
+    ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
+        delay = max(self._page_delay, 2.0)
+        listings, (total, total_pages), soup, final_url = await self._fetch_search_page(
+            parsing.inject_page(url, 1), want_breadcrumb=True
         )
+        yield PageProgress(1, total, total_pages), listings
+        if pages == 1 or not listings:
+            return
+        url_for = parsing.pagination_url_for(soup, base_url=final_url)
+        if url_for is None:
+            return
+        async for progress, page_listings in self.iter_search_pages(
+            url_for,
+            first_page=2,
+            pages=pages - 1 if pages > 0 else 0,
+            page_delay=delay,
+        ):
+            yield progress, page_listings
 
     async def search_url(
         self,
@@ -193,8 +212,8 @@ class Kleinanzeigen:
     ) -> SearchResult:
         """Scrape a saved/filtered search URL (any kleinanzeigen.de search link).
 
-        Pages are injected via 'seite:N'/'s-seite:N' path segments.
-        ``pages`` = 0 fetches all available pages.
+        Page 1 normalizes the URL to page 1; further pages follow the site's
+        own pagination links. ``pages`` = 0 fetches all available pages.
         """
         return await self.collect_search_pages(
             self.iter_search_url(url, pages=pages),
