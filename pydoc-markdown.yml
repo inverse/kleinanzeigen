@@ -1,0 +1,25 @@
+loaders:
+  - type: python
+    search_path: [src]
+    packages: [kleinanzeigen]
+processors:
+  - type: filter
+    documented_only: true
+    skip_empty_modules: true
+  - type: smart
+  - type: crossref
+renderer:
+  type: mkdocs
+  output_directory: docs
+  content_directory_name: api
+  pages:
+    - title: Client
+      contents: [kleinanzeigen.client, kleinanzeigen.client.*]
+    - title: Models
+      contents: [kleinanzeigen.models, kleinanzeigen.models.*]
+    - title: MCP server
+      contents: [kleinanzeigen.mcp_server, kleinanzeigen.mcp_server.*]
+    - title: CLI
+      contents: [kleinanzeigen.cli, kleinanzeigen.cli.*]
+    - title: Response format
+      contents: [kleinanzeigen.format, kleinanzeigen.format.*]
