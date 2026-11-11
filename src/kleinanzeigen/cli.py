@@ -7,7 +7,7 @@ import queue
 import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 from zoneinfo import ZoneInfo
 
 import click
@@ -33,10 +33,17 @@ from kleinanzeigen.models import (
 console = Console()
 
 
-class _IsoDateTime(click.ParamType):
+class _IsoDateTime(click.ParamType[datetime, str | datetime]):
     name = "datetime"
 
-    def convert(self, value, param, ctx):
+    def convert(
+        self,
+        value: str | datetime,
+        param: click.Parameter | None,
+        ctx: click.Context | None,
+    ) -> datetime:
+        if isinstance(value, datetime):
+            return value
         try:
             return datetime.fromisoformat(value)
         except ValueError:
@@ -44,6 +51,11 @@ class _IsoDateTime(click.ParamType):
 
 
 ISO_DATETIME = _IsoDateTime()
+
+
+class _WorkerOut(TypedDict, total=False):
+    result: SearchResult
+    error: BaseException
 
 
 def _search_pages_iter(
@@ -70,7 +82,7 @@ def _run_iter_search(
     back via ``out``.
     """
     progress_q: queue.Queue[PageProgress | None] = queue.Queue()
-    out: dict[str, Any] = {}
+    out: _WorkerOut = {}
 
     async def _tee(
         pages_iter: AsyncIterator[tuple[PageProgress, list[Listing]]],

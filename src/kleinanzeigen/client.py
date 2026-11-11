@@ -77,7 +77,7 @@ class Kleinanzeigen:
         for attempt in range(self._max_retries + 1):
             try:
                 resp = await self._session.get(url, timeout=self._session.timeout)
-                resp.raise_for_status()
+                resp.raise_for_status()  # type: ignore[no-untyped-call]
                 return (
                     resp.text,
                     BeautifulSoup(resp.text, "html.parser"),
