@@ -49,3 +49,6 @@ testpaths = ["tests"]
 
 [tool.ruff]
 src = ["src", "tests"]
+
+[tool.mypy]
+strict = true
