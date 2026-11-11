@@ -1,6 +1,6 @@
 [project]
 name = "kleinanzeigen"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Async client for querying kleinanzeigen.de over plain HTTP (no browser)"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -34,8 +34,11 @@ kleinanzeigen = "kleinanzeigen.cli:main"
 kleinanzeigen-mcp = "kleinanzeigen.mcp_server:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs>=0.4"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kleinanzeigen"]

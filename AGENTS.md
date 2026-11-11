@@ -61,6 +61,14 @@ uv run pytest
 Config lives in `pyproject.toml` (`testpaths = ["tests"]`, `pythonpath = ["src"]`).
 Tests are offline — they exercise `parsing.py` against fixtures, not live HTTP.
 
+## Release
+
+Version is derived from git tags via `hatch-vcs` (`dynamic = ["version"]` in
+`pyproject.toml`) — never edit a version field by hand. To release `X.Y.Z`,
+create a GitHub Release with tag `X.Y.Z` on the target commit;
+`.github/workflows/publish.yml` builds and publishes it to PyPI. Commits after
+a tag build as `X.Y.(Z+1).devN+g<sha>.d<date>` dev versions.
+
 ## Lint / format
 
 Lint/format run through pre-commit only — ruff is not installed in the venv

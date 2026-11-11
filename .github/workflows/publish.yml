@@ -18,6 +18,8 @@ jobs:
       id-token: write
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0 # hatch-vcs needs tag ancestry to derive the version
     - uses: jdx/mise-action@v5
     - name: Install pip dependencies
       run: uv sync
