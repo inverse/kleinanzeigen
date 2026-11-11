@@ -8,131 +8,102 @@
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://github.com/python/mypy)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de), using
-plain HTTP with curl_cffi and BeautifulSoup. No browser required.
+Browse [kleinanzeigen.de](https://www.kleinanzeigen.de) listings from Python,
+your terminal, or an AI assistant. Search by keyword, location, radius, and
+price, reuse saved search URLs, and fetch full ad details: price, seller,
+description, images, and status.
 
-Search listings and fetch ad details through an [async library](#library),
-a [CLI](#cli), or an [MCP server](#mcp-server).
+One package, three ways to use it:
 
-Requests are made sequentially with delays between pages. Check
-kleinanzeigen.de's terms of service before use.
+| | What it is | Use it for |
+| --- | --- | --- |
+| [**Async client**](#async-client) | `Kleinanzeigen`, an `asyncio` Python library returning typed pydantic models | Scripts, scrapers, alerts, data pipelines |
+| [**CLI**](#cli) | The `kleinanzeigen` command, with tables, live progress, and `--json` output | Quick searches and shell scripting |
+| [**MCP server**](#mcp-server) | The `kleinanzeigen-mcp` command, a stdio [MCP](https://modelcontextprotocol.io) server | Letting Claude or other MCP clients search for you |
 
-## Requirements
+All three share the same core: plain HTTP requests through
+[curl_cffi](https://github.com/lexiforest/curl_cffi) (Chrome TLS
+impersonation), parsed with BeautifulSoup. No browser, Selenium, or
+Playwright needed.
 
-- Python 3.14 or later.
+
+> [!NOTE]
+> This is an unofficial project, not affiliated with kleinanzeigen.de. It
+> fetches pages one at a time, with a delay between them, to stay polite.
+> Check kleinanzeigen.de's terms of service before use.
 
 ## Installation
 
-Add the package to your Python project:
+Requires Python 3.14 or later.
+
+As a library in your project:
 
 ```sh
-uv add kleinanzeigen
+uv add kleinanzeigen    # or: pip install kleinanzeigen
 ```
 
-Or install it with pip:
+As standalone `kleinanzeigen` and `kleinanzeigen-mcp` commands:
 
 ```sh
-pip install kleinanzeigen
+uv tool install kleinanzeigen    # or: pipx install kleinanzeigen
 ```
 
-For standalone CLI and MCP commands, install with pipx:
-
-```sh
-pipx install kleinanzeigen
-```
-
-## Library
-
-Use `Kleinanzeigen` as an async context manager to manage the HTTP session.
-Searches return a `SearchResult` with listings and pagination totals;
-single-ad lookups return a `ListingDetail` or `None` if the ad is gone.
-
-### Search and fetch listings
+## Async client
 
 ```python
-import asyncio
-
-from kleinanzeigen import Kleinanzeigen, SearchParams
-
-
-async def main():
-    async with Kleinanzeigen() as ka:
-        result = await ka.search(
-            SearchParams(query="fahrrad", location="Berlin", radius=25, pages=2)
-        )
-        for listing in result.listings:
-            print(listing.title, listing.price, listing.url)
-
-        detail = await ka.get_listing("123456789")
-        if detail is not None:
-            print(detail.title, detail.price.amount, detail.seller.name)
-
-
-asyncio.run(main())
+async with Kleinanzeigen() as ka:
+    result = await ka.search(SearchParams(query="fahrrad", pages=2))
+    for listing in result.listings:
+        print(listing.title, listing.price, listing.url)
 ```
 
-### Saved searches and date cutoffs
-
-Within the same async context, reuse a filtered search URL or restrict results
-by publish date. Naive datetimes are interpreted as Europe/Berlin local time.
-
-```python
-from datetime import datetime
-
-result = await ka.search_url("https://www.kleinanzeigen.de/s-fahrrad/k0", pages=3)
-
-result = await ka.search(
-    SearchParams(query="fahrrad", published_after=datetime(2026, 1, 1), pages=2)
-)
-```
-
-### Page-by-page results
-
-Use `iter_search()` or `iter_search_url()` to process each page as it arrives,
-within the same async context:
-
-```python
-async for progress, listings in ka.iter_search(SearchParams(query="fahrrad", pages=2)):
-    print(progress.page, progress.total_pages)
-    for listing in listings:
-        print(listing.title, listing.url)
-```
-
-Set `pages=0` to fetch all available pages. Keyword searches default to all
-pages; URL searches default to one.
+`Kleinanzeigen` returns frozen pydantic models (`SearchResult`,
+`ListingDetail`) and supports saved search URLs, per-page iteration, and a
+caller-owned HTTP session. See [docs/library.md](docs/library.md) for the
+full API: methods, `SearchParams`, options, and error handling.
 
 ## CLI
 
-Search from the terminal with progress updates and a results table. Use
-`--json` on search commands for machine-readable output; `get` displays
-formatted ad details and exits with status 1 if the ad is gone.
-
 ```sh
-# Search by keyword and location
-kleinanzeigen search -q 'fahrrad' -l 'Berlin' --radius 5 --pages 3
+# Keyword search, all pages by default
+kleinanzeigen search -q 'fahrrad' -l 'Berlin' --radius 5
 
-# Filter by price and return JSON
+# Price range, first page only, as JSON
 kleinanzeigen search -q 'iphone' --min-price 100 --max-price 500 --pages 1 --json
 
-# Use a saved or filtered search URL
+# Only listings published since a date
+kleinanzeigen search -q 'sofa' -l 'Hamburg' --published-after 2026-11-01
+
+# Saved or filtered search URL (1 page by default)
 kleinanzeigen search-url 'https://www.kleinanzeigen.de/s-fahrrad/k0' --pages 3
 
-# Fetch a single ad by URL or numeric ID
+# Full details for one ad, by ID or URL
 kleinanzeigen get 123456789
 ```
 
+| Command | Description |
+| --- | --- |
+| `search` | Keyword search. Options: `-q/--query` (required), `-l/--location`, `--radius`, `--min-price`, `--max-price`, `--page`, `--pages` (default `0` = all), `--published-after`, `--json` |
+| `search-url URL` | Search with a website URL. Options: `--pages` (default `1`, `0` = all), `--published-after`, `--json` |
+| `get URL_OR_ID` | Show price, location, seller, description, details, and image links. Exits with status 1 if the ad is gone |
+
+Searches show a live progress spinner and a results table with clickable
+titles in terminals that support links. With `--json`, the CLI prints the
+[same JSON shape](#response-format) as the MCP server and shows no progress
+spinner, so output can go straight into `jq`.
+
+Run `kleinanzeigen --help` or `kleinanzeigen <command> --help` to see every
+option.
+
 ## MCP server
 
-Connect an MCP-compatible client to the `kleinanzeigen-mcp` server to search
-listings and retrieve ad details. The server uses the stdio transport.
+`kleinanzeigen-mcp` gives MCP clients (Claude Desktop, Claude Code, Cursor,
+and others) access to kleinanzeigen.de over the stdio transport. Once it is
+connected, you can ask things like *"find used road bikes under 400 EUR within
+10 km of Leipzig posted this week"*.
 
-| Tool | Description |
-| --- | --- |
-| `search` | Search listings by keyword, location, and price. |
-| `search_url` | Search using a saved or filtered Kleinanzeigen URL. |
-| `get_listing` | Fetch full ad details by URL or numeric ID. |
-
-Add the server to your MCP client config:
+After installing the commands (`uv tool install kleinanzeigen`), add the
+server to your client config:
 
 ```json
 {
@@ -144,29 +115,48 @@ Add the server to your MCP client config:
 }
 ```
 
-Both search tools support publish-date filtering and a `limit` on returned
-listings. Results include listings, pagination totals, and a `returned` count.
-Missing ads return `{"error": "listing not found or removed"}`.
+Or run it with `uvx`, without installing it first:
+
+```json
+{
+  "mcpServers": {
+    "kleinanzeigen": {
+      "command": "uvx",
+      "args": ["--from", "kleinanzeigen", "kleinanzeigen-mcp"]
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Description | Returns |
+| --- | --- | --- |
+| `search` | Keyword search; `query` is required | Search response |
+| `search_url` | Run a saved or filtered kleinanzeigen.de search URL; `url` is required | Search response |
+| `get_listing` | Full details for one ad by URL or ID (`url_or_id`) | `ListingDetail`, or `{"error": "listing not found or removed"}` |
+
 
 ## Development
 
-Set up the environment and run the offline tests and lint checks:
-
 ```sh
-uv sync
-uv run pytest
-pre-commit run -a
+uv sync                 # set up .venv
+uv run pytest           # offline tests against saved HTML fixtures
+pre-commit run -a       # ruff lint and format
 ```
 
-Run the CLI directly from the checkout:
+Run the CLI from the checkout:
 
 ```sh
 uv run kleinanzeigen search -q 'fahrrad' --pages 1
 ```
 
-The included `.mcp.json` registers `kleinanzeigen-dev` using
-`uv run kleinanzeigen-mcp`. MCP clients that support project-level
-configuration can load it from this checkout.
+The included `.mcp.json` registers a `kleinanzeigen-dev` server that runs
+`uv run kleinanzeigen-mcp`. MCP clients that support project-level config can
+load it straight from this checkout.
+
+The CLI demo GIF in `assets/` is recorded with [vhs](https://github.com/charmbracelet/vhs);
+regenerate it with `vhs assets/cli-demo.tape` from the repo root.
 
 ## Acknowledgements
 
