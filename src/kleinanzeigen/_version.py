@@ -1,4 +1,4 @@
-"""Package version from importlib.metadata — pyproject.toml is the source."""
+"""Installed package version via importlib.metadata (git tags via hatch-vcs)."""
 
 from importlib.metadata import PackageNotFoundError, version
 
