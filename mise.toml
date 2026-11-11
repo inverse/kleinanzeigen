@@ -1,7 +1,7 @@
 [tools]
 python = "3.15.2"
 pre-commit = "latest"
-uv = "0.12.21"
+uv = "0.13.7"
 
 [env]
 # Match CI (FORCE_COLOR=1 in ci.yml) so rich/pytest behave identically locally.
