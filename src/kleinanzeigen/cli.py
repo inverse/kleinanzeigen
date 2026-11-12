@@ -17,6 +17,7 @@ from rich.console import Console, Group
 from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
+from rich.text import Text
 
 from kleinanzeigen import Kleinanzeigen
 from kleinanzeigen._version import package_version
@@ -270,7 +271,6 @@ def get_cmd(url_or_id: str) -> None:
     console.print(_render_detail(detail))
 
 
-TITLE_MAX_WIDTH = 32
 # Upstream published_at values are naive Europe/Berlin local time.
 UPSTREAM_TZ = ZoneInfo("Europe/Berlin")
 
@@ -305,13 +305,7 @@ def _print_table(
         return
 
     table = Table(title=f"Search Results ({len(listings)})")
-    table.add_column(
-        "Title",
-        style="cyan",
-        no_wrap=True,
-        overflow="ellipsis",
-        max_width=TITLE_MAX_WIDTH,
-    )
+    table.add_column("Title", style="cyan")
     table.add_column("Price", style="green", justify="right", no_wrap=True)
     table.add_column("Location", style="yellow", max_width=24, overflow="ellipsis")
     table.add_column("Dist.", justify="right", no_wrap=True)
@@ -320,8 +314,7 @@ def _print_table(
     )
 
     for item in listings:
-        title = escape(item.title.replace("\n", " ").strip())
-        display_title = f"[link={escape(item.url)}]{title}[/link]"
+        display_title = _title_cell(item.title, item.url)
         price = f"{item.price} €" if item.price is not None else "—"
         dist = f"{item.distance_km:g} km" if item.distance_km is not None else "—"
         table.add_row(
@@ -337,6 +330,14 @@ def _print_table(
     total_pages = result.total_pages
     pages = f"{result.pages_fetched}" + (f" of {total_pages}" if total_pages else "")
     console.print(f"[dim]{len(listings)} of {total} results ({pages} pages)[/dim]")
+
+
+def _title_cell(title: str, url: str) -> Text:
+    """Title linked to its ad."""
+    text = Text(title.replace("\n", " ").strip())
+    text.stylize("cyan")
+    text.stylize(f"link {escape(url)}")
+    return text
 
 
 def _format_age(published_at: datetime | None) -> str:
