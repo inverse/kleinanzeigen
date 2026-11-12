@@ -159,7 +159,21 @@ class Kleinanzeigen:
     def iter_search(
         self, params: SearchParams
     ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-        """Page iterator for a keyword ``SearchParams`` (CLI progress path)."""
+        """Page iterator for a keyword ``SearchParams`` (CLI progress path).
+
+        ``params.sort`` routes through the mobile JSON API: website search
+        URLs cannot express a sort order, but ``api.kleinanzeigen.de``
+        accepts ``sortType`` server-side.
+        """
+        if params.sort is not None:
+            from kleinanzeigen import mobile
+
+            return mobile.iter_search(
+                self._session,
+                params,
+                page_delay=self._page_delay,
+                max_retries=self._max_retries,
+            )
         return self.iter_search_pages(
             lambda p: parsing.build_search_url(
                 query=params.query,
