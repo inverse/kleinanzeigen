@@ -17,6 +17,16 @@ class AdStatus(StrEnum):
     DELETED = "deleted"
 
 
+class SortField(StrEnum):
+    """Server-side result ordering. Only honored via the mobile JSON API —
+    kleinanzeigen.de search URLs cannot express a sort order."""
+
+    NEWEST = "newest"
+    PRICE_ASC = "price_asc"
+    PRICE_DESC = "price_desc"
+    DISTANCE = "distance"
+
+
 class _FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -50,6 +60,7 @@ class SearchParams(_FrozenModel):
     max_price: Annotated[int | None, Field(ge=0)] = None
     page: Annotated[int, Field(ge=1)] = 1
     pages: Annotated[int, Field(ge=0)] = 1  # 0 = all pages
+    sort: SortField | None = None
     published_after: datetime | None = None
 
     @model_validator(mode="after")
@@ -60,6 +71,8 @@ class SearchParams(_FrozenModel):
             and self.min_price > self.max_price
         ):
             raise ValueError("min_price must not exceed max_price")
+        if self.sort is SortField.DISTANCE and not self.location:
+            raise ValueError("sort='distance' requires a location")
         return self
 
 
