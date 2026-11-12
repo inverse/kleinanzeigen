@@ -29,8 +29,9 @@ async def search(
     min_price: Annotated[int | None, Field(ge=0)] = None,
     max_price: Annotated[int | None, Field(ge=0)] = None,
     page: Annotated[int, Field(ge=1)] = 1,
-    pages: Annotated[int, Field(ge=0)] = 0,
+    pages: Annotated[int | None, Field(ge=0)] = None,
     published_after: str | None = None,
+    max_results: PositiveInt | None = None,
     limit: PositiveInt | None = None,
 ) -> SearchResponse:
     """Search kleinanzeigen.de for listings matching a keyword query.
@@ -42,8 +43,11 @@ async def search(
         min_price: Minimum price in EUR.
         max_price: Maximum price in EUR.
         page: First page to fetch (1-based).
-        pages: Number of pages to fetch; 0 = all.
+        pages: Pages to fetch; default = 1 page, or all pages (capped by
+            max_results) when max_results is set. 0 = all pages.
         published_after: ISO date/datetime; listings older than this are dropped.
+        max_results: Stop fetching once this many unique listings are
+            collected. With pages unset this also enables paging past page 1.
         limit: Cap the number of returned listings.
     """
     params = SearchParams(
@@ -53,38 +57,51 @@ async def search(
         min_price=min_price,
         max_price=max_price,
         page=page,
-        pages=pages,
+        pages=(
+            0
+            if pages is None and max_results is not None
+            else (1 if pages is None else pages)
+        ),
         published_after=(
             datetime.fromisoformat(published_after) if published_after else None
         ),
     )
     async with Kleinanzeigen() as ka:
-        result = await ka.search(params)
+        result = await ka.search(params, max_results=max_results)
     return search_response(result, limit=limit)
 
 
 @mcp.tool()
 async def search_url(
     url: str,
-    pages: Annotated[int, Field(ge=0)] = 1,
+    pages: Annotated[int | None, Field(ge=0)] = None,
     published_after: str | None = None,
+    max_results: PositiveInt | None = None,
     limit: PositiveInt | None = None,
 ) -> SearchResponse:
     """Scrape a saved/filtered kleinanzeigen.de search URL.
 
     Args:
         url: Any kleinanzeigen.de search URL (e.g. a saved search link).
-        pages: Number of pages to fetch; 0 = all.
+        pages: Pages to fetch; default = 1 page, or all pages (capped by
+            max_results) when max_results is set. 0 = all pages.
         published_after: ISO date/datetime; listings older than this are dropped.
+        max_results: Stop fetching once this many unique listings are
+            collected. With pages unset this also enables paging past page 1.
         limit: Cap the number of returned listings.
     """
     async with Kleinanzeigen() as ka:
         result = await ka.search_url(
             url,
-            pages=pages,
+            pages=(
+                0
+                if pages is None and max_results is not None
+                else (1 if pages is None else pages)
+            ),
             published_after=(
                 datetime.fromisoformat(published_after) if published_after else None
             ),
+            max_results=max_results,
         )
     return search_response(result, limit=limit)
 

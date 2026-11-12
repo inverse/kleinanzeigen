@@ -1,9 +1,11 @@
 """Tests for CLI helpers and argument validation — no network."""
 
+import asyncio
 import inspect
 import re
 
 import pytest
+import pytest_socket
 from click.testing import CliRunner
 from rich.console import Console
 
@@ -108,6 +110,51 @@ def test_iter_search_url_rejects_negative_pages():
     # Drive the async generator manually: it raises before the first await.
     with pytest.raises(ValueError, match="pages must be >= 0"):
         it.asend(None).send(None)
+
+
+def _listing(ad_id: str) -> Listing:
+    return Listing(
+        ad_id=ad_id,
+        url=f"https://www.kleinanzeigen.de/s-anzeige/x/{ad_id}",
+        title="x",
+        price=1,
+        location="Berlin",
+        distance_km=None,
+        description="",
+        published_at=None,
+        is_top_ad=False,
+    )
+
+
+async def _fake_pages():
+    yield cli.PageProgress(1, 100, 10), [_listing("a"), _listing("b"), _listing("b")]
+    yield cli.PageProgress(2, 100, 10), [_listing("c")]
+
+
+def _drain(pages_agen, **kwargs):
+    """Drive an async page iterator through collect_search_pages synchronously."""
+
+    async def _collect():
+        return await cli.Kleinanzeigen.collect_search_pages(pages_agen, **kwargs)
+
+    pytest_socket.enable_socket()  # asyncio needs socketpair; fixture re-disables
+    try:
+        return asyncio.run(_collect())
+    finally:
+        pytest_socket.disable_socket()
+
+
+def test_collect_search_pages_max_results_stops_early():
+    result = _drain(_fake_pages(), max_results=2)
+    # page 1 alone yields 2 unique listings ("b" deduped) -> page 2 never fetched
+    assert [l.ad_id for l in result.listings] == ["a", "b"]
+    assert result.pages_fetched == 1
+
+
+def test_collect_search_pages_no_cap_fetches_all():
+    result = _drain(_fake_pages())
+    assert [l.ad_id for l in result.listings] == ["a", "b", "c"]
+    assert result.pages_fetched == 2
 
 
 def test_print_table_escapes_markup(capsys):

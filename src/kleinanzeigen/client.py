@@ -173,10 +173,18 @@ class Kleinanzeigen:
             pages=params.pages,
         )
 
-    async def search(self, params: SearchParams) -> SearchResult:
-        """Keyword search. ``pages`` counts pages starting at ``page``; 0 = all."""
+    async def search(
+        self, params: SearchParams, *, max_results: int | None = None
+    ) -> SearchResult:
+        """Keyword search. ``pages`` counts pages starting at ``page``; 0 = all.
+
+        ``max_results`` stops paging once that many unique listings are
+        collected (deduped); None/0 = no cap.
+        """
         return await self.collect_search_pages(
-            self.iter_search(params), published_after=params.published_after
+            self.iter_search(params),
+            published_after=params.published_after,
+            max_results=max_results,
         )
 
     def iter_search_url(
@@ -221,15 +229,19 @@ class Kleinanzeigen:
         *,
         pages: int = 1,
         published_after: datetime | None = None,
+        max_results: int | None = None,
     ) -> SearchResult:
         """Scrape a saved/filtered search URL (any kleinanzeigen.de search link).
 
         Page 1 normalizes the URL to page 1; further pages follow the site's
         own pagination links. ``pages`` = 0 fetches all available pages.
+        ``max_results`` stops paging once that many unique listings are
+        collected; None/0 = no cap.
         """
         return await self.collect_search_pages(
             self.iter_search_url(url, pages=pages),
             published_after=published_after,
+            max_results=max_results,
         )
 
     @staticmethod
@@ -237,10 +249,18 @@ class Kleinanzeigen:
         pages_iter: AsyncIterator[tuple[PageProgress, list[Listing]]],
         *,
         published_after: datetime | None = None,
+        max_results: int | None = None,
     ) -> SearchResult:
+        """Drain a page iterator into a SearchResult.
+
+        ``max_results`` stops iterating once that many unique listings are
+        collected (dedup applied as pages arrive); None or <= 0 = no cap.
+        """
         listings: list[Listing] = []
+        seen: set[str] = set()
         total_results = total_pages = None
         pages_fetched = 0
+        limit = max_results if max_results is not None and max_results > 0 else None
 
         async for progress, page_listings in pages_iter:
             pages_fetched += 1
@@ -256,11 +276,15 @@ class Kleinanzeigen:
                 )
             else:
                 stop = False
-            listings.extend(page_listings)
-            if stop:
+            for listing in page_listings:
+                if listing.ad_id not in seen:
+                    seen.add(listing.ad_id)
+                    listings.append(listing)
+            if stop or (limit is not None and len(listings) >= limit):
                 break
 
-        listings = parsing.dedupe_by_ad_id(listings)
+        if limit is not None:
+            listings = listings[:limit]
         return SearchResult(
             listings=listings,
             total_results=total_results,
