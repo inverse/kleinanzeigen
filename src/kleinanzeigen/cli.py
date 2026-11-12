@@ -28,6 +28,7 @@ from kleinanzeigen.models import (
     ListingDetail,
     SearchParams,
     SearchResult,
+    SortField,
 )
 
 console = Console()
@@ -178,6 +179,12 @@ def cli() -> None:
     type=ISO_DATETIME,
     help="Drop listings older than this ISO date/datetime (naive = Europe/Berlin)",
 )
+@click.option(
+    "--sort",
+    type=click.Choice([f.value for f in SortField]),
+    default=None,
+    help="Server-side sort via the mobile API: newest, price_asc, price_desc, distance",
+)
 def search(
     query: str,
     location: str | None,
@@ -188,6 +195,7 @@ def search(
     page: int,
     json_out: bool,
     published_after: datetime | None,
+    sort: str | None,
 ) -> None:
     """Keyword search."""
     try:
@@ -200,6 +208,7 @@ def search(
             page=page,
             pages=pages,
             published_after=published_after,
+            sort=SortField(sort) if sort else None,
         )
     except ValidationError as exc:
         raise click.UsageError(exc.errors()[0]["msg"]) from exc

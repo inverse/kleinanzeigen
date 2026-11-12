@@ -8,7 +8,7 @@ publishes concrete output schemas.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field, PositiveInt
@@ -16,7 +16,7 @@ from pydantic import Field, PositiveInt
 from kleinanzeigen import Kleinanzeigen
 from kleinanzeigen._version import package_version
 from kleinanzeigen.format import ErrorResponse, SearchResponse, search_response
-from kleinanzeigen.models import ListingDetail, SearchParams
+from kleinanzeigen.models import ListingDetail, SearchParams, SortField
 
 mcp = FastMCP(f"kleinanzeigen {package_version()}")
 
@@ -31,6 +31,7 @@ async def search(
     page: Annotated[int, Field(ge=1)] = 1,
     pages: Annotated[int, Field(ge=0)] = 0,
     published_after: str | None = None,
+    sort: Literal["newest", "price_asc", "price_desc", "distance"] | None = None,
     limit: PositiveInt | None = None,
 ) -> SearchResponse:
     """Search kleinanzeigen.de for listings matching a keyword query.
@@ -44,6 +45,7 @@ async def search(
         page: First page to fetch (1-based).
         pages: Number of pages to fetch; 0 = all.
         published_after: ISO date/datetime; listings older than this are dropped.
+        sort: Server-side sort via the mobile API: newest, price_asc, price_desc, distance.
         limit: Cap the number of returned listings.
     """
     params = SearchParams(
@@ -57,6 +59,7 @@ async def search(
         published_after=(
             datetime.fromisoformat(published_after) if published_after else None
         ),
+        sort=SortField(sort) if sort else None,
     )
     async with Kleinanzeigen() as ka:
         result = await ka.search(params)

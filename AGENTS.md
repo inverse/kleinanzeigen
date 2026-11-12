@@ -13,13 +13,21 @@ HTTP (`curl_cffi` with Chrome TLS impersonation + BeautifulSoup). No browser.
   `collect_search_pages()` drains an iterator into a `SearchResult`.
   `get_listing()` fetches a single ad (`None` when gone). All pagination
   policy (delays, URL building) lives here — adapters never touch it.
+  `iter_search()` routes to `mobile.py` when `params.sort` is set.
 - `src/kleinanzeigen/parsing.py` — HTML extraction: search cards, breadcrumb
   totals, ad detail pages, URL building, date/price/location parsing.
   `apply_min_publish_date()` filters a page's listings and reports whether
   an old listing ends pagination.
+- `src/kleinanzeigen/mobile.py` — sorted-search transport via the Android
+  app's JSON API (`api.kleinanzeigen.de/api/ads.json`), used only when
+  `SearchParams.sort` is set: website search URLs cannot express a sort
+  order. Public Basic auth + app headers, no account. Maps ad JSON onto the
+  same `Listing` model; resolves `location` names to `locationId` via
+  `/api/locations.json`.
 - `src/kleinanzeigen/models.py` — frozen pydantic models: `SearchParams`
-  (validated request: page/pages/price bounds), `Listing`, `ListingDetail`,
-  `SearchResult`, `Price`, `Seller`, `Location`, `AdStatus`. Upstream
+  (validated request: page/pages/price bounds/sort), `SortField`, `Listing`,
+  `ListingDetail`, `SearchResult`, `Price`, `Seller`, `Location`, `AdStatus`.
+  Upstream
   `published_at` is naive Europe/Berlin local time.
 - `src/kleinanzeigen/format.py` — typed JSON response boundary shared by CLI
   and MCP: `SearchResponse` (envelope with `returned` after a response-level
@@ -34,7 +42,7 @@ HTTP (`curl_cffi` with Chrome TLS impersonation + BeautifulSoup). No browser.
   the same search/get operations to MCP clients. Tools return typed models
   (`SearchResponse`, `ListingDetail | ErrorResponse`) so FastMCP publishes
   concrete output schemas.
-- `tests/` — pytest suite (currently `test_parsing.py`).
+- `tests/` — pytest suite (`test_parsing.py`, `test_mobile.py`, `test_cli.py`).
 
 ## Setup
 
