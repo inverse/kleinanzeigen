@@ -17,8 +17,8 @@ dependencies = [
     "mcp>=1.0,<2",
     "rich>=15.0.0",
     "humanize>=4.16.0",
-    "curl-cffi>=0.17.0",
     "pydantic>=2.0",
+    "httpx>=0.28",
 ]
 
 [dependency-groups]

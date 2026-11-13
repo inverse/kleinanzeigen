@@ -1,7 +1,7 @@
 # kleinanzeigen
 
 Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de) over its
-Android JSON API (`curl_cffi` with Chrome TLS impersonation). No browser.
+Android JSON API using native async HTTPX. No browser.
 
 ## Structure
 

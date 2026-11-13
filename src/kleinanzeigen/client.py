@@ -12,7 +12,7 @@ from typing import Self
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from curl_cffi.requests import AsyncSession
+import httpx
 
 from kleinanzeigen import mobile
 from kleinanzeigen.mobile import KleinanzeigenError, PageProgress
@@ -57,11 +57,10 @@ class Kleinanzeigen:
         timeout: float = 60.0,
         page_delay: float = 1.0,
         max_retries: int = 2,
-        session: AsyncSession | None = None,
+        session: httpx.AsyncClient | None = None,
     ):
         self._owns_session = session is None
-        self._session = session or AsyncSession(
-            impersonate="chrome",
+        self._session = session or httpx.AsyncClient(
             timeout=timeout,
             headers={"Accept-Language": "de-DE,de;q=0.9"},
         )
@@ -76,7 +75,7 @@ class Kleinanzeigen:
 
     async def aclose(self) -> None:
         if self._owns_session:
-            await self._session.close()
+            await self._session.aclose()
 
     def iter_search(
         self, params: SearchParams

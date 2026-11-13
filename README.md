@@ -20,9 +20,8 @@ One package, three ways to use it:
 | [**CLI**](#cli) | The `kleinanzeigen` command, with tables, live progress, and `--json` output | Quick searches and shell scripting |
 | [**MCP server**](#mcp-server) | The `kleinanzeigen-mcp` command, a stdio [MCP](https://modelcontextprotocol.io) server | Letting Claude or other MCP clients search for you |
 
-All three share the same core: kleinanzeigen.de's Android JSON API over plain
-HTTP through [curl_cffi](https://github.com/lexiforest/curl_cffi). No browser,
-Selenium, Playwright, or account needed.
+All three share the same core: kleinanzeigen.de's Android JSON API over HTTPX.
+No browser, Selenium, Playwright, or account needed.
 
 
 > [!NOTE]

@@ -86,8 +86,8 @@ Kleinanzeigen(timeout=60.0, page_delay=1.0, max_retries=2, session=None)
 
 - `page_delay`: seconds to wait between search pages.
 - `max_retries`: retries on failed requests, with backoff.
-- `session`: bring your own `curl_cffi` `AsyncSession`. The client will not
-  close a session you pass in.
+- `session`: bring your own `httpx.AsyncClient`. The client will not close a
+  session you pass in.
 
 When a mobile API request still fails after retrying, the client raises
 `KleinanzeigenError`.
