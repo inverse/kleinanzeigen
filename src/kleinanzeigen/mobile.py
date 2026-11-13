@@ -1,14 +1,7 @@
-"""Mobile JSON API transport (api.kleinanzeigen.de) for sorted searches.
+"""Search and detail transport for kleinanzeigen.de's Android JSON API.
 
-The website's search URLs cannot express a sort order: the sort dropdown
-submits ``sortingField`` to the legacy ``/s-suchanfrage.html`` endpoint,
-which 301s to a canonical ``/s-…`` path that drops it. The Android app's
-REST API does support ``sortType`` server-side, so sorted ``SearchParams``
-are served from there instead of the HTML pages. Responses are mapped onto
-the same ``Listing`` models the web parser produces.
-
-Auth is the public Basic credential shipped inside the Android app
-(overridable via env), plus per-request app headers — no account needed.
+Auth uses the public Basic credential shipped inside the Android app
+(overridable via env), plus per-request app headers; no account is needed.
 """
 
 from __future__ import annotations
@@ -21,23 +14,47 @@ import random
 import re
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import unescape
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
-from kleinanzeigen.client import KleinanzeigenError, PageProgress
-from kleinanzeigen.models import Listing, SearchParams, SortField
+from kleinanzeigen.models import (
+    AdStatus,
+    Listing,
+    ListingDetail,
+    Location,
+    Price,
+    SearchParams,
+    Seller,
+    SortField,
+)
+
+
+@dataclass(frozen=True)
+class PageProgress:
+    """One fetched search page: page number plus result totals when known."""
+
+    page: int
+    total_results: int | None
+    total_pages: int | None
+
+
+class KleinanzeigenError(Exception):
+    """Raised when a request fails after all retries."""
+
 
 API_HOST = "https://api.kleinanzeigen.de"
 APP_VERSION = "2026.25.0"
 DEFAULT_BASIC_USER = "android"
 DEFAULT_BASIC_PW = "TaR60pEttY"
 
+AD_NS = "{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ad"
 ADS_NS = "{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ads"
 LOCATIONS_NS = "{http://www.ebayclassifiedsgroup.com/schema/location/v1}locations"
 PAGE_SIZE = 25
@@ -72,6 +89,10 @@ def _headers(xapp: str) -> dict[str, str]:
     }
 
 
+def _xapp() -> str:
+    return f"{uuid.uuid4()}{int(datetime.now(UTC).timestamp() * 1000)}"
+
+
 async def _get_json(
     session: AsyncSession,
     url: str,
@@ -79,6 +100,7 @@ async def _get_json(
     *,
     xapp: str,
     max_retries: int,
+    allow_missing: bool = False,
 ) -> Any:
     """GET -> parsed JSON. Retries on transport errors and 429/5xx."""
     last_exc: Exception | None = None
@@ -87,6 +109,8 @@ async def _get_json(
             resp = await session.get(
                 url, params=params, headers=_headers(xapp), timeout=session.timeout
             )
+            if allow_missing and resp.status_code in (404, 410):
+                return None
             if resp.status_code == 429 or resp.status_code >= 500:
                 raise RequestException(f"HTTP {resp.status_code} from {url}")
             resp.raise_for_status()  # type: ignore[no-untyped-call]
@@ -186,8 +210,30 @@ def _parse_published_at(node: Any) -> datetime | None:
     return parsed.astimezone(UPSTREAM_TZ).replace(tzinfo=None)
 
 
+def _clean_description(node: Any) -> str:
+    raw = str(_val(node) or "")
+    description = unescape(_BR_RE.sub("\n", raw))
+    return unescape(_TAG_RE.sub("", description)).strip()
+
+
+def _links(ad: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(link.get("rel")): str(link.get("href") or "")
+        for link in _as_list(ad.get("link"))
+        if isinstance(link, dict)
+    }
+
+
+def _label(node: Any) -> str:
+    if not isinstance(node, dict):
+        return str(node or "")
+    return str(
+        node.get("localized-label") or _val(node.get("value")) or node.get("name") or ""
+    )
+
+
 def _listing_location(ad: dict[str, Any]) -> str:
-    """'PLZ City' like the web cards, from locations or ad-address."""
+    """'PLZ City' from locations or ad-address."""
     locations = ad.get("locations") or {}
     for loc in _as_list(locations.get("location")):
         if isinstance(loc, dict):
@@ -202,11 +248,7 @@ def _listing_location(ad: dict[str, Any]) -> str:
 
 def _listing_from_ad(ad: dict[str, Any]) -> Listing | None:
     ad_id = str(ad.get("id") or "")
-    links = {
-        ln.get("rel"): ln.get("href", "")
-        for ln in _as_list(ad.get("link"))
-        if isinstance(ln, dict)
-    }
+    links = _links(ad)
     if not ad_id:
         self_href = links.get("self", "")
         ad_id = self_href.rstrip("/").rsplit("/", 1)[-1]
@@ -229,10 +271,7 @@ def _listing_from_ad(ad: dict[str, Any]) -> Listing | None:
         except TypeError, ValueError:
             distance = None
 
-    # Mobile descriptions are HTML fragments; flatten tags, keep line breaks.
-    raw_desc = _val(ad.get("description")) or ""
-    description = unescape(_BR_RE.sub("\n", raw_desc))
-    description = unescape(_TAG_RE.sub("", description))
+    description = _clean_description(ad.get("description"))
 
     return Listing(
         ad_id=ad_id,
@@ -247,14 +286,154 @@ def _listing_from_ad(ad: dict[str, Any]) -> Listing | None:
     )
 
 
+def _detail_location(ad: dict[str, Any]) -> Location:
+    address = ad.get("ad-address") or {}
+    postal_code = str(_val(address.get("zip-code")) or "")
+    locations = ad.get("locations") or {}
+    location = next(
+        (
+            node
+            for node in _as_list(locations.get("location"))
+            if isinstance(node, dict)
+        ),
+        {},
+    )
+    city = str(_val(location.get("localized-name")) or "")
+    if postal_code and city.startswith(postal_code):
+        city = city[len(postal_code) :].strip()
+    if not city:
+        city = str(_val(address.get("state")) or "")
+
+    regions = location.get("regions") or {}
+    state = next(
+        (
+            str(_val(region.get("localized-name")))
+            for region in _as_list(regions.get("region"))
+            if isinstance(region, dict) and _val(region.get("localized-name"))
+        ),
+        "",
+    )
+    return Location(postal_code=postal_code, city=city, state=state)
+
+
+def _detail_attributes(ad: dict[str, Any]) -> dict[str, str]:
+    details: dict[str, str] = {}
+    attributes = ad.get("attributes") or {}
+    for attribute in _as_list(attributes.get("attribute")):
+        if not isinstance(attribute, dict):
+            continue
+        label = _label(attribute)
+        value = ", ".join(
+            formatted
+            for item in _as_list(attribute.get("value"))
+            if (formatted := _label(item))
+        )
+        if label and value:
+            details[label] = value
+    return details
+
+
+def _detail_images(ad: dict[str, Any]) -> list[str]:
+    images: list[str] = []
+    pictures = ad.get("pictures") or {}
+    for picture in _as_list(pictures.get("picture")):
+        if not isinstance(picture, dict):
+            continue
+        links = _links(picture)
+        url = links.get("large") or next(iter(links.values()), "")
+        if url:
+            images.append(url)
+    return images
+
+
+def _detail_from_ad(
+    ad: dict[str, Any], *, scraped_at: datetime | None
+) -> ListingDetail:
+    links = _links(ad)
+    ad_id = str(ad.get("id") or "")
+    if not ad_id:
+        ad_id = links.get("self", "").rstrip("/").rsplit("/", 1)[-1]
+
+    price_node = ad.get("price") or {}
+    price_type = _val(price_node.get("price-type"))
+    amount = (
+        None
+        if price_type in ("FREE", "RANGE")
+        else _parse_amount(price_node.get("amount"))
+    )
+    shipping = ad.get("shipping-options")
+    delivery: Literal["pickup", "shipping"] | None = None
+    if shipping is not None:
+        delivery = "shipping" if _as_list(shipping.get("shipping-option")) else "pickup"
+
+    category = ad.get("category") or {}
+    category_name = _val(category.get("localized-name"))
+    start = _parse_published_at(ad.get("start-date-time"))
+    member_since = _parse_published_at(ad.get("user-since-date-time"))
+    features = ad.get("features-active") or {}
+    badges = ad.get("userBadges") or {}
+    status = str(_val(ad.get("ad-status")) or "ACTIVE").lower()
+
+    return ListingDetail(
+        ad_id=ad_id,
+        url=links.get("self-public-website") or links.get("self") or "",
+        title=unescape(str(_val(ad.get("title")) or "")).strip(),
+        status=AdStatus(status),
+        price=Price(amount=amount, negotiable=price_type == "PLEASE_CONTACT"),
+        categories=[str(category_name)] if category_name else [],
+        description=_clean_description(ad.get("description")) or None,
+        location=_detail_location(ad),
+        delivery=delivery,
+        images=_detail_images(ad),
+        details=_detail_attributes(ad),
+        features=[
+            label
+            for feature in _as_list(features.get("feature-active"))
+            if (label := _label(feature))
+        ],
+        seller=Seller(
+            name=str(_val(ad.get("contact-name")) or "") or None,
+            user_id=str(_val(ad.get("user-id")) or "") or None,
+            member_since=member_since.date().isoformat() if member_since else None,
+            type="business"
+            if _val(ad.get("seller-account-type")) == "BUSINESS"
+            else "private",
+            badges=[
+                label
+                for badge in _as_list(badges.get("badges"))
+                if (label := _label(badge))
+            ],
+        ),
+        created_at=start.date() if start else None,
+        scraped_at=scraped_at,
+    )
+
+
+async def get_listing(
+    session: AsyncSession, ad_id: str, *, max_retries: int
+) -> ListingDetail | None:
+    data = await _get_json(
+        session,
+        f"{API_HOST}/api/ads/{ad_id}.json",
+        {},
+        xapp=_xapp(),
+        max_retries=max_retries,
+        allow_missing=True,
+    )
+    if data is None:
+        return None
+    root = data.get(AD_NS, {})
+    ad = root.get("value") if isinstance(root, dict) else None
+    if not isinstance(ad, dict):
+        return None
+    return _detail_from_ad(ad, scraped_at=datetime.now(UTC))
+
+
 def _search_params(params: SearchParams, location_id: str | None) -> dict[str, Any]:
-    sort = params.sort
-    if sort is None:
-        raise ValueError("mobile.iter_search requires params.sort")
     p: dict[str, Any] = {
-        "page": params.page - 1,  # web pages are 1-based, API is 0-based
+        "page": params.page - 1,  # public pages are 1-based, API is 0-based
         "size": PAGE_SIZE,
-        "sortType": _SORT_TYPES[sort],
+        "sortType": _SORT_TYPES[params.sort or SortField.NEWEST],
     }
     if params.query:
         p["q"] = params.query
@@ -276,8 +455,8 @@ async def iter_search(
     page_delay: float,
     max_retries: int,
 ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-    """Sorted keyword search via the mobile API. Same yield shape as the web path."""
-    xapp = f"{uuid.uuid4()}{int(datetime.now(UTC).timestamp() * 1000)}"
+    """Keyword search via the mobile API, page by page."""
+    xapp = _xapp()
 
     location_id = None
     if params.location:
@@ -298,7 +477,7 @@ async def iter_search(
         else itertools.count(first_api_page)
     )
     for offset, api_page in enumerate(page_range):
-        if total_pages is not None and api_page >= first_api_page + total_pages:
+        if total_pages is not None and api_page >= total_pages:
             break
         if offset > 0:
             await asyncio.sleep(page_delay + random.random() * 0.4)

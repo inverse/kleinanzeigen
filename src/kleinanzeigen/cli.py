@@ -60,16 +60,8 @@ class _WorkerOut(TypedDict, total=False):
     error: BaseException
 
 
-def _search_pages_iter(
-    ka: Kleinanzeigen, query: SearchParams | str, pages: int
-) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-    if isinstance(query, SearchParams):
-        return ka.iter_search(query)
-    return ka.iter_search_url(query, pages=pages)
-
-
 def _run_iter_search(
-    query: SearchParams | str,
+    query: SearchParams,
     *,
     first_page: int = 1,
     pages: int = 0,
@@ -78,10 +70,8 @@ def _run_iter_search(
 ) -> SearchResult:
     """Consume a search-page iterator on a worker thread.
 
-    ``query`` is a ``SearchParams`` or a saved-search URL. Each
-    ``PageProgress`` is pushed onto a queue so the main thread can render a
-    live spinner while pages stream in; the collected ``SearchResult`` comes
-    back via ``out``.
+    Each ``PageProgress`` is pushed onto a queue so the main thread can render
+    a live spinner while pages stream in.
     """
     progress_q: queue.Queue[PageProgress | None] = queue.Queue()
     out: _WorkerOut = {}
@@ -98,7 +88,7 @@ def _run_iter_search(
 
             async def run() -> SearchResult:
                 async with Kleinanzeigen() as ka:
-                    pages_iter = _tee(_search_pages_iter(ka, query, pages))
+                    pages_iter = _tee(ka.iter_search(query))
                     return await Kleinanzeigen.collect_search_pages(
                         pages_iter, published_after=published_after
                     )
@@ -184,7 +174,7 @@ def cli() -> None:
     "--sort",
     type=click.Choice([f.value for f in SortField]),
     default=None,
-    help="Server-side sort via the mobile API: newest, price_asc, price_desc, distance",
+    help="Server-side sort: newest, price_asc, price_desc, distance",
 )
 def search(
     query: str,
@@ -231,37 +221,6 @@ def search(
         min_price=min_price,
         max_price=max_price,
     )
-
-
-@cli.command("search-url")
-@click.argument("url")
-@click.option(
-    "--pages", type=click.IntRange(min=0), default=1, help="Number of pages to fetch"
-)
-@click.option(
-    "--json", "json_out", is_flag=True, help="Print raw JSON instead of a table"
-)
-@click.option(
-    "--published-after",
-    default=None,
-    type=ISO_DATETIME,
-    help="Drop listings older than this ISO date/datetime (naive = Europe/Berlin)",
-)
-def search_url_cmd(
-    url: str, pages: int, json_out: bool, published_after: datetime | None
-) -> None:
-    """Scrape a saved/filtered kleinanzeigen.de search URL."""
-    result = _run_iter_search(
-        url,
-        first_page=1,
-        pages=pages,
-        show_progress=not json_out,
-        published_after=published_after,
-    )
-    if json_out:
-        click.echo(search_response_json(result))
-        return
-    _print_table(result, query=url)
 
 
 @cli.command("get")

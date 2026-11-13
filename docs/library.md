@@ -31,9 +31,7 @@ asyncio.run(main())
 | Method | Returns | Description |
 | --- | --- | --- |
 | `search(params)` | `SearchResult` | Keyword search built from a `SearchParams` |
-| `search_url(url, pages=1, published_after=None)` | `SearchResult` | Run any kleinanzeigen.de search URL, such as a saved or filtered search |
 | `iter_search(params)` | async iterator | Same as `search()`, yielding `(PageProgress, listings)` per page |
-| `iter_search_url(url, pages=1)` | async iterator | Same as `search_url()`, yielding page by page |
 | `get_listing(url_or_id)` | `ListingDetail \| None` | Full ad details, or `None` if the ad was removed |
 
 ## Search parameters
@@ -49,20 +47,12 @@ asyncio.run(main())
 | `min_price`, `max_price` | `None` | Price bounds in EUR |
 | `page` | `1` | First page to fetch |
 | `pages` | `1` | Number of pages to fetch; `0` fetches every page |
+| `sort` | `None` | `newest` (default), `price_asc`, `price_desc`, or `distance` |
 | `published_after` | `None` | Drop listings older than this datetime |
 
 Naive datetimes in `published_after` are read as Europe/Berlin local time,
 the timezone the site uses. Results are newest first, so pagination stops as
 soon as a page reaches older listings.
-
-## Saved searches
-
-Set up filters on the website (category, condition, shipping, and so on),
-then pass the resulting URL:
-
-```python
-result = await ka.search_url("https://www.kleinanzeigen.de/s-fahrrad/k0", pages=3)
-```
 
 ## Page by page
 
@@ -94,11 +84,10 @@ All models are frozen pydantic models, exported from `kleinanzeigen`:
 Kleinanzeigen(timeout=60.0, page_delay=1.0, max_retries=2, session=None)
 ```
 
-- `page_delay`: seconds to wait between search pages. Searches by URL
-  always wait at least 2 seconds, because the site rate-limits those harder.
+- `page_delay`: seconds to wait between search pages.
 - `max_retries`: retries on failed requests, with backoff.
 - `session`: bring your own `curl_cffi` `AsyncSession`. The client will not
   close a session you pass in.
 
-When a request still fails after retrying, or the site returns a block or
-error page, the client raises `KleinanzeigenError`.
+When a mobile API request still fails after retrying, the client raises
+`KleinanzeigenError`.
