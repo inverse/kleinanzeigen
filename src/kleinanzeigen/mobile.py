@@ -21,8 +21,7 @@ from html import unescape
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.exceptions import RequestException
+import httpx
 
 from kleinanzeigen.models import (
     AdStatus,
@@ -94,7 +93,7 @@ def _xapp() -> str:
 
 
 async def _get_json(
-    session: AsyncSession,
+    session: httpx.AsyncClient,
     url: str,
     params: dict[str, Any],
     *,
@@ -112,10 +111,10 @@ async def _get_json(
             if allow_missing and resp.status_code in (404, 410):
                 return None
             if resp.status_code == 429 or resp.status_code >= 500:
-                raise RequestException(f"HTTP {resp.status_code} from {url}")
-            resp.raise_for_status()  # type: ignore[no-untyped-call]
+                raise httpx.HTTPError(f"HTTP {resp.status_code} from {url}")
+            resp.raise_for_status()
             return resp.json()
-        except RequestException as exc:
+        except httpx.HTTPError as exc:
             last_exc = exc
             if attempt < max_retries:
                 await asyncio.sleep(min(2**attempt + random.random() * 0.5, 5.0))
@@ -166,7 +165,7 @@ def _best_location(candidates: list[tuple[str, str]], query: str) -> str | None:
 
 
 async def resolve_location_id(
-    session: AsyncSession, query: str, *, xapp: str, max_retries: int
+    session: httpx.AsyncClient, query: str, *, xapp: str, max_retries: int
 ) -> str | None:
     """Place name/PLZ -> mobile API location id, or None when unresolvable."""
     if query.strip().isdigit():
@@ -410,7 +409,7 @@ def _detail_from_ad(
 
 
 async def get_listing(
-    session: AsyncSession, ad_id: str, *, max_retries: int
+    session: httpx.AsyncClient, ad_id: str, *, max_retries: int
 ) -> ListingDetail | None:
     data = await _get_json(
         session,
@@ -449,7 +448,7 @@ def _search_params(params: SearchParams, location_id: str | None) -> dict[str, A
 
 
 async def iter_search(
-    session: AsyncSession,
+    session: httpx.AsyncClient,
     params: SearchParams,
     *,
     page_delay: float,

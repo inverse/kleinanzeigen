@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import httpx
 import pytest
 import pytest_socket
 
@@ -193,29 +194,6 @@ def test_detail_from_ad_maps_mobile_fields():
     assert detail.scraped_at == scraped_at
 
 
-class _Response:
-    def __init__(self, status_code):
-        self.status_code = status_code
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return {AD_NS: {"value": _ad()}}
-
-
-class _Session:
-    timeout = 30
-
-    def __init__(self, status_code=200):
-        self.status_code = status_code
-        self.urls = []
-
-    async def get(self, url, **kwargs):
-        self.urls.append(url)
-        return _Response(self.status_code)
-
-
 def _run(awaitable):
     pytest_socket.enable_socket()
     try:
@@ -224,8 +202,23 @@ def _run(awaitable):
         pytest_socket.disable_socket()
 
 
-def test_get_listing_extracts_id_from_url():
-    session = _Session()
+@pytest.fixture
+def api_session():
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        if request.url.path.endswith("/0.json"):
+            return httpx.Response(404)
+        return httpx.Response(200, json={AD_NS: {"value": _ad()}})
+
+    session = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30)
+    yield session, requests
+    _run(session.aclose())
+
+
+def test_get_listing_extracts_id_from_url(api_session):
+    session, requests = api_session
     ka = Kleinanzeigen(session=session)
 
     detail = _run(
@@ -236,10 +229,10 @@ def test_get_listing_extracts_id_from_url():
 
     assert detail is not None
     assert detail.ad_id == "3569727847"
-    assert session.urls == ["https://api.kleinanzeigen.de/api/ads/3569727847.json"]
+    assert requests == ["https://api.kleinanzeigen.de/api/ads/3569727847.json"]
 
 
-def test_get_listing_returns_none_for_missing_ad():
-    session = _Session(status_code=404)
+def test_get_listing_returns_none_for_missing_ad(api_session):
+    session, _ = api_session
     ka = Kleinanzeigen(session=session)
     assert _run(ka.get_listing("0")) is None
