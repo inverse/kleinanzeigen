@@ -1,44 +1,51 @@
-"""Async client for kleinanzeigen.de over plain HTTP — no browser required.
+"""Async client for kleinanzeigen.de's mobile JSON API.
 
-Kleinanzeigen listing pages are server-rendered, so curl_cffi (with Chrome
-TLS impersonation) + BeautifulSoup covers search and detail extraction.
-Pages are fetched sequentially with a delay: Kleinanzeigen rate-limits
-concurrent requests from one IP. The session persists cookies across calls
-to avoid repeated consent/bot walls.
+Pages are fetched sequentially with a delay to avoid rate limits. One session
+is shared by search, location resolution, and detail requests.
 """
 
 from __future__ import annotations
 
-import asyncio
-import itertools
-import random
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Self
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
-from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.exceptions import RequestException
 
-from kleinanzeigen import parsing
+from kleinanzeigen import mobile
+from kleinanzeigen.mobile import KleinanzeigenError, PageProgress
 from kleinanzeigen.models import Listing, ListingDetail, SearchParams, SearchResult
 
-
-@dataclass(frozen=True)
-class PageProgress:
-    """One fetched search page: page number plus breadcrumb totals when known."""
-
-    page: int
-    total_results: int | None
-    total_pages: int | None
+__all__ = ["Kleinanzeigen", "KleinanzeigenError", "PageProgress"]
 
 
-AD_URL_PREFIX = f"{parsing.BASE_URL}/s-anzeige/"
+def _apply_published_after(
+    listings: list[Listing], published_after: datetime
+) -> tuple[list[Listing], bool]:
+    """Drop listings older than the cutoff; True = an old listing was seen.
 
-
-class KleinanzeigenError(Exception):
-    """Raised when a request fails after all retries."""
+    Naive datetimes use Europe/Berlin, matching the mobile API's local times.
+    """
+    if published_after.tzinfo is not None:
+        published_after = published_after.astimezone(ZoneInfo("Europe/Berlin"))
+    else:
+        published_after = published_after.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+    kept = []
+    stop = False
+    for listing in listings:
+        published = listing.published_at
+        if listing.is_top_ad or published is None:
+            kept.append(listing)
+            continue
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+        if published >= published_after:
+            kept.append(listing)
+        else:
+            stop = True
+    return kept, stop
 
 
 class Kleinanzeigen:
@@ -71,120 +78,15 @@ class Kleinanzeigen:
         if self._owns_session:
             await self._session.close()
 
-    async def _fetch(self, url: str) -> tuple[str, BeautifulSoup, str]:
-        """GET url -> (raw_html, soup, final_url). Retries on HTTP errors."""
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries + 1):
-            try:
-                resp = await self._session.get(url, timeout=self._session.timeout)
-                resp.raise_for_status()  # type: ignore[no-untyped-call]
-                return (
-                    resp.text,
-                    BeautifulSoup(resp.text, "html.parser"),
-                    str(resp.url),
-                )
-            except RequestException as exc:
-                last_exc = exc
-                if attempt < self._max_retries:
-                    await asyncio.sleep(min(2**attempt + random.random() * 0.5, 5.0))
-        raise KleinanzeigenError(f"failed to fetch {url}: {last_exc}") from last_exc
-
-    async def _fetch_search_page(
-        self, url: str, *, want_breadcrumb: bool
-    ) -> tuple[list[Listing], tuple[int | None, int | None], BeautifulSoup, str]:
-        for attempt in range(3):
-            html, soup, final_url = await self._fetch(url)
-            if soup.select_one("#srp-breadcrumb-summary") is None:
-                raise KleinanzeigenError(
-                    f"unexpected non-search page for {url} (blocked or error page)"
-                )
-            previews = parsing.parse_ad_previews(html)
-            listings = [
-                listing
-                for card in soup.select("article[data-adid]")
-                if (listing := parsing.extract_listing(card, previews)) is not None
-            ]
-            if listings or attempt == 2:
-                break
-            await asyncio.sleep(3.0)
-        breadcrumb = parsing.parse_breadcrumb(soup) if want_breadcrumb else (None, None)
-        return listings, breadcrumb, soup, final_url
-
-    async def iter_search_pages(
-        self,
-        url_for: Callable[[int], str],
-        *,
-        first_page: int = 1,
-        pages: int = 1,
-        page_delay: float | None = None,
-    ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-        """Yield ``(PageProgress, listings)`` per fetched page.
-
-        ``url_for(p)`` builds the URL for page ``p``. ``pages`` counts pages
-        starting at ``first_page``; 0 = all available. Stops on an empty page
-        or once ``total_pages`` (from the first page's breadcrumb) is passed.
-        ``page_delay`` overrides the inter-page delay. Callers wanting
-        ``published_after`` filtering should stop iterating early.
-
-        Raises ValueError for out-of-range page bounds.
-        """
-        if first_page < 1:
-            raise ValueError("first_page must be >= 1")
-        if pages < 0:
-            raise ValueError("pages must be >= 0 (0 = all pages)")
-        delay = self._page_delay if page_delay is None else page_delay
-        total_pages: int | None = None
-        breadcrumb_page = first_page
-
-        page_range = (
-            range(first_page, first_page + pages)
-            if pages > 0
-            else itertools.count(first_page)
-        )
-        for p in page_range:
-            if total_pages is not None and p > total_pages:
-                break
-            if p > first_page:
-                await asyncio.sleep(delay)
-
-            page_listings, (total, tp), _, _ = await self._fetch_search_page(
-                url_for(p), want_breadcrumb=(p == breadcrumb_page)
-            )
-            if p == breadcrumb_page:
-                total_pages = tp
-            yield PageProgress(p, total, total_pages), page_listings
-            if not page_listings:
-                break  # successfully loaded but empty: past the last page
-
     def iter_search(
         self, params: SearchParams
     ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-        """Page iterator for a keyword ``SearchParams`` (CLI progress path).
-
-        ``params.sort`` routes through the mobile JSON API: website search
-        URLs cannot express a sort order, but ``api.kleinanzeigen.de``
-        accepts ``sortType`` server-side.
-        """
-        if params.sort is not None:
-            from kleinanzeigen import mobile
-
-            return mobile.iter_search(
-                self._session,
-                params,
-                page_delay=self._page_delay,
-                max_retries=self._max_retries,
-            )
-        return self.iter_search_pages(
-            lambda p: parsing.build_search_url(
-                query=params.query,
-                location=params.location,
-                radius=params.radius,
-                min_price=params.min_price,
-                max_price=params.max_price,
-                page=p,
-            ),
-            first_page=params.page,
-            pages=params.pages,
+        """Yield ``(PageProgress, listings)`` for each mobile API page."""
+        return mobile.iter_search(
+            self._session,
+            params,
+            page_delay=self._page_delay,
+            max_retries=self._max_retries,
         )
 
     async def search(
@@ -198,63 +100,6 @@ class Kleinanzeigen:
         return await self.collect_search_pages(
             self.iter_search(params),
             published_after=params.published_after,
-            max_results=max_results,
-        )
-
-    def iter_search_url(
-        self, url: str, *, pages: int = 1
-    ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-        """Page iterator for a saved/filtered search URL.
-
-        Page 1 fetches the URL as given (normalized to page 1); later pages
-        reuse the pagination links from the fetched page, since Kleinanzeigen
-        canonicalizes page URLs. Enforces a >= 2s inter-page delay; saved
-        searches hit a different path shape that Kleinanzeigen rate-limits
-        harder.
-        """
-        return self._iter_search_url(url, pages=pages)
-
-    async def _iter_search_url(
-        self, url: str, *, pages: int
-    ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-        if pages < 0:
-            raise ValueError("pages must be >= 0 (0 = all pages)")
-        delay = max(self._page_delay, 2.0)
-        listings, (total, total_pages), soup, final_url = await self._fetch_search_page(
-            parsing.inject_page(url, 1), want_breadcrumb=True
-        )
-        yield PageProgress(1, total, total_pages), listings
-        if pages == 1 or not listings:
-            return
-        url_for = parsing.pagination_url_for(soup, base_url=final_url)
-        if url_for is None:
-            return
-        async for progress, page_listings in self.iter_search_pages(
-            url_for,
-            first_page=2,
-            pages=pages - 1 if pages > 0 else 0,
-            page_delay=delay,
-        ):
-            yield progress, page_listings
-
-    async def search_url(
-        self,
-        url: str,
-        *,
-        pages: int = 1,
-        published_after: datetime | None = None,
-        max_results: int | None = None,
-    ) -> SearchResult:
-        """Scrape a saved/filtered search URL (any kleinanzeigen.de search link).
-
-        Page 1 normalizes the URL to page 1; further pages follow the site's
-        own pagination links. ``pages`` = 0 fetches all available pages.
-        ``max_results`` stops paging once that many unique listings are
-        collected; None/0 = no cap.
-        """
-        return await self.collect_search_pages(
-            self.iter_search_url(url, pages=pages),
-            published_after=published_after,
             max_results=max_results,
         )
 
@@ -285,7 +130,7 @@ class Kleinanzeigen:
                 )
 
             if published_after is not None:
-                page_listings, stop = parsing.apply_published_after(
+                page_listings, stop = _apply_published_after(
                     page_listings, published_after
                 )
             else:
@@ -308,18 +153,8 @@ class Kleinanzeigen:
 
     async def get_listing(self, url_or_id: str) -> ListingDetail | None:
         """Fetch one ad by URL or bare ad id. None when the ad is gone."""
-        url = url_or_id if "://" in url_or_id else f"{AD_URL_PREFIX}{url_or_id}"
-        _, soup, final_url = await self._fetch(url)
-
-        # Redirect away from the ad URL or the expired-ad marker: ad is gone.
-        if not final_url.startswith(AD_URL_PREFIX) or soup.select_one(
-            "#srchrslt-adexpired"
-        ):
-            return None
-
-        try:
-            return parsing.extract_detail(
-                soup, url=final_url, scraped_at=datetime.now(UTC)
-            )
-        except ValueError as exc:
-            raise KleinanzeigenError(str(exc)) from exc
+        path = urlparse(url_or_id).path
+        ad_id = path.rstrip("/").rsplit("/", 1)[-1].split("-", 1)[0]
+        return await mobile.get_listing(
+            self._session, ad_id, max_retries=self._max_retries
+        )

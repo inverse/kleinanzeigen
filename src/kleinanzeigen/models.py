@@ -18,8 +18,7 @@ class AdStatus(StrEnum):
 
 
 class SortField(StrEnum):
-    """Server-side result ordering. Only honored via the mobile JSON API —
-    kleinanzeigen.de search URLs cannot express a sort order."""
+    """Server-side result ordering."""
 
     NEWEST = "newest"
     PRICE_ASC = "price_asc"
@@ -104,7 +103,7 @@ class SearchResult(_FrozenModel):
 
 
 class ListingDetail(_FrozenModel):
-    """Everything extractable from a single ad page (/s-anzeige/...)."""
+    """Details returned by the mobile API for a single ad."""
 
     ad_id: str
     url: str

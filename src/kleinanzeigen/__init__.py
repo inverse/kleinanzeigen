@@ -1,4 +1,4 @@
-"""Async client for querying kleinanzeigen.de without a browser."""
+"""Async client for kleinanzeigen.de's mobile JSON API."""
 
 from kleinanzeigen.client import Kleinanzeigen, KleinanzeigenError, PageProgress
 from kleinanzeigen.models import (

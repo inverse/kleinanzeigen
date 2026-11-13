@@ -1,29 +1,20 @@
 # kleinanzeigen
 
-Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de) over plain
-HTTP (`curl_cffi` with Chrome TLS impersonation + BeautifulSoup). No browser.
+Async Python client for [kleinanzeigen.de](https://www.kleinanzeigen.de) over its
+Android JSON API (`curl_cffi` with Chrome TLS impersonation). No browser.
 
 ## Structure
 
-- `src/kleinanzeigen/client.py` — `Kleinanzeigen` async client. `search()` takes
-  a `SearchParams` and `search_url()` takes a URL; both return a
-  `SearchResult`. `iter_search()` / `iter_search_url()` stream
-  `(PageProgress, listings)` per page for progress UIs;
-  `iter_search_pages(url_for)` is the low-level primitive, and
+- `src/kleinanzeigen/client.py` — `Kleinanzeigen` async client. `search()`
+  takes a `SearchParams` and returns a `SearchResult`; `iter_search()` streams
+  `(PageProgress, listings)` per page for progress UIs, and
   `collect_search_pages()` drains an iterator into a `SearchResult`.
-  `get_listing()` fetches a single ad (`None` when gone). All pagination
-  policy (delays, URL building) lives here — adapters never touch it.
-  `iter_search()` routes to `mobile.py` when `params.sort` is set.
-- `src/kleinanzeigen/parsing.py` — HTML extraction: search cards, breadcrumb
-  totals, ad detail pages, URL building, date/price/location parsing.
-  `apply_min_publish_date()` filters a page's listings and reports whether
-  an old listing ends pagination.
-- `src/kleinanzeigen/mobile.py` — sorted-search transport via the Android
-  app's JSON API (`api.kleinanzeigen.de/api/ads.json`), used only when
-  `SearchParams.sort` is set: website search URLs cannot express a sort
-  order. Public Basic auth + app headers, no account. Maps ad JSON onto the
-  same `Listing` model; resolves `location` names to `locationId` via
-  `/api/locations.json`.
+  `get_listing()` accepts an ad URL or ID and returns `None` when gone.
+- `src/kleinanzeigen/mobile.py` — search and detail transport via the Android
+  app's JSON API (`api.kleinanzeigen.de`). Public Basic auth + app headers, no
+  account. Maps ad JSON onto `Listing` and `ListingDetail`; resolves `location`
+  names to `locationId` via `/api/locations.json`. Pagination delays and retry
+  policy live here.
 - `src/kleinanzeigen/models.py` — frozen pydantic models: `SearchParams`
   (validated request: page/pages/price bounds/sort), `SortField`, `Listing`,
   `ListingDetail`, `SearchResult`, `Price`, `Seller`, `Location`, `AdStatus`.
@@ -34,15 +25,15 @@ HTTP (`curl_cffi` with Chrome TLS impersonation + BeautifulSoup). No browser.
   `limit`), `ErrorResponse`, `search_response*()`. Responses embed core
   models directly; keep adapter-only fields (limit/returned) out of
   `SearchResult`.
-- `src/kleinanzeigen/cli.py` — `kleinanzeigen` command: `search`, `search-url`,
-  `get`. Rich table renders `SearchResult` directly; `--json` serializes via
+- `src/kleinanzeigen/cli.py` — `kleinanzeigen` command: `search`, `get`.
+  Rich table renders `SearchResult` directly; `--json` serializes via
   `search_response_json`. Progress spinner consumes `iter_search*` on a
   worker thread — keep CLI/presentation concerns out of `client.py`.
 - `src/kleinanzeigen/mcp_server.py` — `kleinanzeigen-mcp` MCP server exposing
   the same search/get operations to MCP clients. Tools return typed models
   (`SearchResponse`, `ListingDetail | ErrorResponse`) so FastMCP publishes
   concrete output schemas.
-- `tests/` — pytest suite (`test_parsing.py`, `test_mobile.py`, `test_cli.py`).
+- `tests/` — offline pytest suite (`test_mobile.py`, `test_cli.py`).
 
 ## Setup
 
@@ -56,7 +47,6 @@ uv sync
 
 ```sh
 kleinanzeigen search -q "fahrrad" -l "Berlin" --radius 5   # all pages by default
-kleinanzeigen search-url "<saved search URL>" --pages 3
 kleinanzeigen get <url-or-ad-id>
 ```
 
@@ -67,7 +57,7 @@ uv run pytest
 ```
 
 Config lives in `pyproject.toml` (`testpaths = ["tests"]`, `pythonpath = ["src"]`).
-Tests are offline — they exercise `parsing.py` against fixtures, not live HTTP.
+Tests are offline — they use synthetic API payloads and disable network access.
 
 ## Release
 

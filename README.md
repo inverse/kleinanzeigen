@@ -10,8 +10,7 @@
 
 Browse [kleinanzeigen.de](https://www.kleinanzeigen.de) listings from Python,
 your terminal, or an AI assistant. Search by keyword, location, radius, and
-price, reuse saved search URLs, and fetch full ad details: price, seller,
-description, images, and status.
+price, and fetch full ad details: price, seller, description, images, and status.
 
 One package, three ways to use it:
 
@@ -21,10 +20,9 @@ One package, three ways to use it:
 | [**CLI**](#cli) | The `kleinanzeigen` command, with tables, live progress, and `--json` output | Quick searches and shell scripting |
 | [**MCP server**](#mcp-server) | The `kleinanzeigen-mcp` command, a stdio [MCP](https://modelcontextprotocol.io) server | Letting Claude or other MCP clients search for you |
 
-All three share the same core: plain HTTP requests through
-[curl_cffi](https://github.com/lexiforest/curl_cffi) (Chrome TLS
-impersonation), parsed with BeautifulSoup. No browser, Selenium, or
-Playwright needed.
+All three share the same core: kleinanzeigen.de's Android JSON API over plain
+HTTP through [curl_cffi](https://github.com/lexiforest/curl_cffi). No browser,
+Selenium, Playwright, or account needed.
 
 
 > [!NOTE]
@@ -58,9 +56,9 @@ async with Kleinanzeigen() as ka:
 ```
 
 `Kleinanzeigen` returns frozen pydantic models (`SearchResult`,
-`ListingDetail`) and supports saved search URLs, per-page iteration, and a
-caller-owned HTTP session. See [docs/library.md](docs/library.md) for the
-full API: methods, `SearchParams`, options, and error handling.
+`ListingDetail`) and supports per-page iteration and a caller-owned HTTP
+session. See [docs/library.md](docs/library.md) for the full API: methods,
+`SearchParams`, options, and error handling.
 
 ## CLI
 
@@ -74,9 +72,6 @@ kleinanzeigen search -q 'iphone' --min-price 100 --max-price 500 --pages 1 --jso
 # Only listings published since a date
 kleinanzeigen search -q 'sofa' -l 'Hamburg' --published-after 2026-11-01
 
-# Saved or filtered search URL (1 page by default)
-kleinanzeigen search-url 'https://www.kleinanzeigen.de/s-fahrrad/k0' --pages 3
-
 # Full details for one ad, by ID or URL
 kleinanzeigen get 123456789
 ```
@@ -84,7 +79,6 @@ kleinanzeigen get 123456789
 | Command | Description |
 | --- | --- |
 | `search` | Keyword search. Options: `-q/--query` (required), `-l/--location`, `--radius`, `--min-price`, `--max-price`, `--page`, `--pages` (default `0` = all), `--published-after`, `--json` |
-| `search-url URL` | Search with a website URL. Options: `--pages` (default `1`, `0` = all), `--published-after`, `--json` |
 | `get URL_OR_ID` | Show price, location, seller, description, details, and image links. Exits with status 1 if the ad is gone |
 
 Searches show a live progress spinner and a results table with clickable
@@ -133,7 +127,6 @@ Or run it with `uvx`, without installing it first:
 | Tool | Description | Returns |
 | --- | --- | --- |
 | `search` | Keyword search; `query` is required | Search response |
-| `search_url` | Run a saved or filtered kleinanzeigen.de search URL; `url` is required | Search response |
 | `get_listing` | Full details for one ad by URL or ID (`url_or_id`) | `ListingDetail`, or `{"error": "listing not found or removed"}` |
 
 
@@ -141,7 +134,7 @@ Or run it with `uvx`, without installing it first:
 
 ```sh
 uv sync                 # set up .venv
-uv run pytest           # offline tests against saved HTML fixtures
+uv run pytest           # offline API mapping and CLI tests
 pre-commit run -a       # ruff lint and format
 ```
 
