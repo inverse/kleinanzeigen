@@ -6,7 +6,7 @@ import asyncio
 import queue
 import threading
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 from zoneinfo import ZoneInfo
 
@@ -278,13 +278,13 @@ def _print_table(
     table.add_column("Location", style="yellow", max_width=24, overflow="ellipsis")
     table.add_column("Dist.", justify="right", no_wrap=True)
     table.add_column(
-        "Age", style="magenta", no_wrap=True, max_width=14, overflow="ellipsis"
+        "Age", style="magenta", no_wrap=True, max_width=18, overflow="ellipsis"
     )
 
     for item in listings:
         display_title = _title_cell(item.title, item.url)
         price = f"{item.price} €" if item.price is not None else "—"
-        dist = f"{item.distance_km:g} km" if item.distance_km is not None else "—"
+        dist = _format_distance(item.distance_km)
         table.add_row(
             display_title,
             price,
@@ -308,12 +308,22 @@ def _title_cell(title: str, url: str) -> Text:
     return text
 
 
+def _format_distance(km: float | None) -> str:
+    if km is None:
+        return "—"
+    if km < 1:
+        return f"{km * 1000:.0f} m"
+    return f"{km:.1f} km"
+
+
 def _format_age(published_at: datetime | None) -> str:
     if published_at is None:
         return "—"
     if published_at.tzinfo is None:
         published_at = published_at.replace(tzinfo=UPSTREAM_TZ)
     delta = datetime.now(UTC) - published_at.astimezone(UTC)
+    if delta >= timedelta(days=365):
+        return "over 1 year ago"
     return humanize.naturaltime(delta, future=False)
 
 
