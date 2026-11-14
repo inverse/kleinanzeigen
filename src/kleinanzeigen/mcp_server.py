@@ -1,7 +1,7 @@
 """MCP server exposing kleinanzeigen.de search over stdio.
 
 Adapter boundary: tools take protocol-level arguments (strings, ints),
-build core request models, and return typed response models so FastMCP
+build core request models, and return typed response models so the SDK
 publishes concrete output schemas.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from pydantic import Field, PositiveInt
 
 from kleinanzeigen import Kleinanzeigen
@@ -18,7 +18,7 @@ from kleinanzeigen._version import package_version
 from kleinanzeigen.format import ErrorResponse, SearchResponse, search_response
 from kleinanzeigen.models import ListingDetail, SearchParams, SortField
 
-mcp = FastMCP(f"kleinanzeigen {package_version()}")
+mcp = MCPServer(f"kleinanzeigen {package_version()}")
 
 
 @mcp.tool()
