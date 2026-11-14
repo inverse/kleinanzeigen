@@ -44,8 +44,12 @@ async def search(
         min_price: Minimum price in EUR.
         max_price: Maximum price in EUR.
         page: First page to fetch (1-based).
-        pages: Pages to fetch; default = 1 page, or all pages (capped by
-            max_results) when max_results is set. 0 = all pages.
+        pages: Number of pages to fetch, starting at `page`. Default: 1;
+            0 = all remaining pages. E.g. page=3, pages=2 fetches pages
+            3-4; to page through results call again with an incremented
+            page (bounded by total_pages in the response). Setting
+            max_results without pages fetches all pages until max_results
+            listings are collected.
         published_after: ISO date/datetime; listings older than this are dropped.
         max_results: Stop fetching once this many unique listings are
             collected. With pages unset this also enables paging past page 1.
