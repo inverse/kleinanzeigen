@@ -8,13 +8,17 @@ import httpx
 import pytest
 import pytest_socket
 
+from kleinanzeigen import mobile
 from kleinanzeigen.client import Kleinanzeigen
 from kleinanzeigen.mobile import (
     AD_NS,
+    ADS_NS,
     _detail_from_ad,
     _listing_from_ad,
     _parse_published_at,
     _search_params,
+    iter_search,
+    resolve_category_id,
 )
 from kleinanzeigen.models import AdStatus, SearchParams, SortField
 
@@ -115,9 +119,15 @@ def test_search_params_sort_validation():
 
 
 def test_search_params_default_to_newest():
-    request = _search_params(SearchParams(query="x"), None)
+    request = _search_params(SearchParams(query="x"), None, None)
     assert request["sortType"] == "DATE_DESCENDING"
     assert request["page"] == 0
+
+
+def test_search_params_include_category_id():
+    request = _search_params(SearchParams(query="x"), "1234", "217")
+    assert request["categoryId"] == "217"
+    assert request["locationId"] == "1234"
 
 
 def test_detail_from_ad_maps_mobile_fields():
@@ -236,3 +246,124 @@ def test_get_listing_returns_none_for_missing_ad(api_session):
     session, _ = api_session
     ka = Kleinanzeigen(session=session)
     assert _run(ka.get_listing("0")) is None
+
+
+@pytest.fixture
+def categories_session():
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        if request.url.path.endswith("/api/categories.json"):
+            tree = {
+                "category": [
+                    {
+                        "id": "210",
+                        "localized-name": _val("Auto, Rad & Boot"),
+                        "category": [
+                            {
+                                "id": "217",
+                                "localized-name": _val("Fahrräder & Zubehör"),
+                            },
+                            {
+                                "id": "216",
+                                "localized-name": _val("Autos"),
+                            },
+                        ],
+                    }
+                ]
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "{http://www.ebayclassifiedsgroup.com/schema/category/v1}categories": {
+                        "value": tree
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                ADS_NS: {
+                    "value": {
+                        "paging": {"numFound": _val(1)},
+                        "ad": [_ad()],
+                    }
+                }
+            },
+        )
+
+    session = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30)
+    yield session, requests
+    _run(session.aclose())
+
+
+@pytest.fixture
+def clean_category_cache(monkeypatch):
+    monkeypatch.setattr(mobile, "_CATEGORY_CACHE", None)
+    yield
+
+
+def test_resolve_category_id_numeric_passthrough(
+    categories_session, clean_category_cache
+):
+    session, requests = categories_session
+    assert _run(resolve_category_id(session, "217", xapp="x", max_retries=0)) == "217"
+    assert requests == []
+
+
+def test_resolve_category_id_by_name(categories_session, clean_category_cache):
+    session, requests = categories_session
+    assert (
+        _run(resolve_category_id(session, "fahrrad", xapp="x", max_retries=0)) == "217"
+    )
+    assert any("/api/categories.json" in r for r in requests)
+    # second call served from cache
+    assert _run(resolve_category_id(session, "autos", xapp="x", max_retries=0)) == "216"
+    assert len([r for r in requests if "categories.json" in r]) == 1
+
+
+def test_resolve_category_id_unknown_returns_none(
+    categories_session, clean_category_cache
+):
+    session, _ = categories_session
+    assert (
+        _run(resolve_category_id(session, "fliegende Autos", xapp="x", max_retries=0))
+        is None
+    )
+
+
+def test_iter_search_sends_category_id(categories_session, clean_category_cache):
+    session, requests = categories_session
+
+    async def drain():
+        out = []
+        async for progress, listings in iter_search(
+            session,
+            SearchParams(query="x", category="217"),
+            page_delay=0,
+            max_retries=0,
+        ):
+            out.append((progress, listings))
+        return out
+
+    pages = _run(drain())
+    assert len(pages) == 1
+    ads_req = next(r for r in requests if "/api/ads.json" in r)
+    assert "categoryId=217" in ads_req
+
+
+def test_list_categories_filters_by_query(categories_session, clean_category_cache):
+    session, _ = categories_session
+    paths = [
+        c.path for c in _run(mobile.list_categories(session, "fahrr", max_retries=0))
+    ]
+    assert paths == ["Auto, Rad & Boot > Fahrräder & Zubehör"]
+
+
+def test_list_categories_returns_full_tree_for_empty_query(
+    categories_session, clean_category_cache
+):
+    session, _ = categories_session
+    ids = [c.id for c in _run(mobile.list_categories(session, None, max_retries=0))]
+    assert ids == ["210", "217", "216"]

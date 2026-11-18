@@ -65,6 +65,9 @@ session. See [docs/library.md](docs/library.md) for the full API: methods,
 # Keyword search, all pages by default
 kleinanzeigen search -q 'fahrrad' -l 'Berlin' --radius 5
 
+# Limit to one category, by name or id
+kleinanzeigen search -q 'velo' --category 'Fahrräder & Zubehör'
+
 # Price range, first page only, as JSON
 kleinanzeigen search -q 'iphone' --min-price 100 --max-price 500 --pages 1 --json
 
@@ -77,7 +80,8 @@ kleinanzeigen get 123456789
 
 | Command | Description |
 | --- | --- |
-| `search` | Keyword search. Options: `-q/--query` (required), `-l/--location`, `--radius`, `--min-price`, `--max-price`, `--page`, `--pages` (default `0` = all), `--published-after`, `--json` |
+| `search` | Keyword search. Options: `-q/--query` (required), `--category` (id or name), `-l/--location`, `--radius`, `--min-price`, `--max-price`, `--page`, `--pages` (default `0` = all), `--published-after`, `--json` |
+| `categories [-q QUERY]` | List category IDs and paths for `--category`; `-q` filters by name or path; `--json` prints the same shape as the MCP tool |
 | `get URL_OR_ID` | Show price, location, seller, description, details, and image links. Exits with status 1 if the ad is gone |
 
 Searches show a live progress spinner and a results table with clickable
@@ -125,7 +129,8 @@ Or run it with `uvx`, without installing it first:
 
 | Tool | Description | Returns |
 | --- | --- | --- |
-| `search` | Keyword search; `query` is required | Search response |
+| `search` | Keyword search; `query` is required, `category` optionally limits to one category (id or German name) | Search response |
+| `list_categories` | Category IDs and paths; `query` filters by name or path, empty lists the full tree | List of `Category` (`id`, `name`, `parent_id`, `path`) |
 | `get_listing` | Full details for one ad by URL or ID (`url_or_id`) | `ListingDetail`, or `{"error": "listing not found or removed"}` |
 
 

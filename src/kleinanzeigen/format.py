@@ -9,7 +9,15 @@ import json
 
 from pydantic import BaseModel
 
-from kleinanzeigen.models import Listing, SearchResult
+from kleinanzeigen.models import Category, Listing, SearchResult
+
+
+def category_list_json(categories: list[Category]) -> str:
+    return json.dumps(
+        [category.model_dump(mode="json") for category in categories],
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 class SearchResponse(BaseModel):

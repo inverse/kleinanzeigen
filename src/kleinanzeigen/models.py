@@ -46,6 +46,8 @@ class Seller(_FrozenModel):
 
 class SearchParams(_FrozenModel):
     """Core request for a keyword search; CLI/MCP adapters build one.
+    ``category`` is a numeric API id, a German category name, or a full path
+    from ``Kleinanzeigen.list_categories()``. Names and paths ignore case.
 
     Upstream ``published_at`` values are naive Europe/Berlin local time, so a
     naive ``published_after`` is compared in that zone. Passing an aware
@@ -53,6 +55,7 @@ class SearchParams(_FrozenModel):
     """
 
     query: str | None = None
+    category: int | str | None = None
     location: str | None = None
     radius: Annotated[int | None, Field(ge=0)] = None
     min_price: Annotated[int | None, Field(ge=0)] = None
@@ -120,3 +123,12 @@ class ListingDetail(_FrozenModel):
     seller: Seller = Seller()
     created_at: date | None = None
     scraped_at: datetime | None = None
+
+
+class Category(_FrozenModel):
+    """One node of the site's category tree; ``path`` is root-to-node."""
+
+    id: str
+    name: str
+    parent_id: str | None = None
+    path: str

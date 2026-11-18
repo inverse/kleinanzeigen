@@ -16,7 +16,13 @@ import httpx
 
 from kleinanzeigen import mobile
 from kleinanzeigen.mobile import KleinanzeigenError, PageProgress
-from kleinanzeigen.models import Listing, ListingDetail, SearchParams, SearchResult
+from kleinanzeigen.models import (
+    Category,
+    Listing,
+    ListingDetail,
+    SearchParams,
+    SearchResult,
+)
 
 __all__ = ["Kleinanzeigen", "KleinanzeigenError", "PageProgress"]
 
@@ -86,6 +92,12 @@ class Kleinanzeigen:
             params,
             page_delay=self._page_delay,
             max_retries=self._max_retries,
+        )
+
+    async def list_categories(self, query: str | None = None) -> list[Category]:
+        """Find categories by ID, name, or path; an empty query returns the tree."""
+        return await mobile.list_categories(
+            self._session, query, max_retries=self._max_retries
         )
 
     async def search(

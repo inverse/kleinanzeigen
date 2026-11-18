@@ -25,6 +25,7 @@ import httpx
 
 from kleinanzeigen.models import (
     AdStatus,
+    Category,
     Listing,
     ListingDetail,
     Location,
@@ -56,6 +57,7 @@ DEFAULT_BASIC_PW = "TaR60pEttY"
 AD_NS = "{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ad"
 ADS_NS = "{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ads"
 LOCATIONS_NS = "{http://www.ebayclassifiedsgroup.com/schema/location/v1}locations"
+CATEGORIES_NS = "{http://www.ebayclassifiedsgroup.com/schema/category/v1}categories"
 PAGE_SIZE = 25
 UPSTREAM_TZ = ZoneInfo("Europe/Berlin")
 
@@ -183,6 +185,110 @@ async def resolve_location_id(
     candidates: list[tuple[str, str]] = []
     _flatten_locations(nodes, candidates)
     return _best_location(candidates, query)
+
+
+def _flatten_categories(
+    nodes: Any, out: list[Category], parent: Category | None = None
+) -> None:
+    for node in _as_list(nodes):
+        if not isinstance(node, dict):
+            raise KleinanzeigenError("invalid mobile API category node")
+        cid = str(node.get("id"))
+        name = _val(node.get("localized-name")) or _val(node.get("id-name"))
+        if not (
+            cid.isascii() and cid.isdigit() and isinstance(name, str) and name.strip()
+        ):
+            raise KleinanzeigenError("invalid mobile API category id or name")
+        category = Category(
+            id=cid,
+            name=name,
+            parent_id=parent.id if parent else None,
+            path=f"{parent.path} > {name}" if parent else name,
+        )
+        out.append(category)
+        _flatten_categories(node.get("category"), out, category)
+
+
+_UMLAUTS = str.maketrans({"ä": "a", "ö": "o", "ü": "u", "ß": "ss"})
+_PLURAL_ENDINGS = ("ern", "en", "er", "e", "s")
+
+
+def _stem(word: str) -> str:
+    """Fold umlauts and a common German plural ending for loose matching."""
+    s = word.casefold().translate(_UMLAUTS)
+    for ending in _PLURAL_ENDINGS:
+        if s.endswith(ending) and len(s) - len(ending) >= 3:
+            return s[: -len(ending)]
+    return s
+
+
+_CATEGORY_CACHE: tuple[Category, ...] | None = None
+
+
+async def _load_categories(
+    session: httpx.AsyncClient, *, xapp: str, max_retries: int
+) -> tuple[Category, ...]:
+    global _CATEGORY_CACHE
+    if _CATEGORY_CACHE is None:
+        data = await _get_json(
+            session,
+            f"{API_HOST}/api/categories.json",
+            {},
+            xapp=xapp,
+            max_retries=max_retries,
+        )
+        block = data.get(CATEGORIES_NS) if isinstance(data, dict) else None
+        root = block.get("value") if isinstance(block, dict) else None
+        categories: list[Category] = []
+        if isinstance(root, dict):
+            _flatten_categories(root.get("category"), categories)
+        if not categories:
+            raise KleinanzeigenError("missing or empty mobile API category tree")
+        _CATEGORY_CACHE = tuple(categories)
+    return _CATEGORY_CACHE
+
+
+async def list_categories(
+    session: httpx.AsyncClient, query: str | None, *, max_retries: int
+) -> list[Category]:
+    categories = await _load_categories(session, xapp=_xapp(), max_retries=max_retries)
+    q = (query or "").strip().casefold().translate(_UMLAUTS)
+    if q.isascii() and q.isdigit():
+        return [category for category in categories if category.id == q]
+    return [
+        category
+        for category in categories
+        if q in category.path.casefold().translate(_UMLAUTS)
+    ]
+
+
+async def resolve_category_id(
+    session: httpx.AsyncClient, query: str, *, xapp: str, max_retries: int
+) -> str | None:
+    """Resolve an id or an unambiguous name, path, or single-word shorthand."""
+    q = query.strip().casefold()
+    if not q:
+        raise KleinanzeigenError("category must not be blank")
+    if q.isascii() and q.isdigit():
+        return q
+
+    categories = await _load_categories(session, xapp=xapp, max_retries=max_retries)
+    matches = [
+        category
+        for category in categories
+        if q in (category.name.casefold(), category.path.casefold())
+    ]
+    if not matches and q.isalpha():
+        stem = _stem(q)
+        matches = [
+            category
+            for category in categories
+            if _stem(category.name.split(maxsplit=1)[0]) == stem
+        ]
+    if len(matches) > 1:
+        choices = "; ".join(f"{cat.path} ({cat.id})" for cat in matches)
+        raise KleinanzeigenError(f"ambiguous category {query!r}; matches: {choices}")
+    return matches[0].id if matches else None
 
 
 def _parse_amount(node: Any) -> Decimal | None:
@@ -428,7 +534,9 @@ async def get_listing(
     return _detail_from_ad(ad, scraped_at=datetime.now(UTC))
 
 
-def _search_params(params: SearchParams, location_id: str | None) -> dict[str, Any]:
+def _search_params(
+    params: SearchParams, location_id: str | None, category_id: str | None
+) -> dict[str, Any]:
     p: dict[str, Any] = {
         "page": params.page - 1,  # public pages are 1-based, API is 0-based
         "size": PAGE_SIZE,
@@ -436,6 +544,8 @@ def _search_params(params: SearchParams, location_id: str | None) -> dict[str, A
     }
     if params.query:
         p["q"] = params.query
+    if category_id:
+        p["categoryId"] = category_id
     if location_id:
         p["locationId"] = location_id
     if params.radius:
@@ -457,6 +567,16 @@ async def iter_search(
     """Keyword search via the mobile API, page by page."""
     xapp = _xapp()
 
+    category_id = None
+    if params.category is not None:
+        category_id = await resolve_category_id(
+            session, str(params.category), xapp=xapp, max_retries=max_retries
+        )
+        if category_id is None:
+            raise KleinanzeigenError(
+                f"could not resolve category {params.category!r} via mobile API"
+            )
+
     location_id = None
     if params.location:
         location_id = await resolve_location_id(
@@ -469,7 +589,7 @@ async def iter_search(
 
     total_pages: int | None = None
     first_api_page = params.page - 1
-    base_params = _search_params(params, location_id)
+    base_params = _search_params(params, location_id, category_id)
     page_range = (
         range(first_api_page, first_api_page + params.pages)
         if params.pages > 0

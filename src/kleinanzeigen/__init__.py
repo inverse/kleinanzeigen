@@ -3,6 +3,7 @@
 from kleinanzeigen.client import Kleinanzeigen, KleinanzeigenError, PageProgress
 from kleinanzeigen.models import (
     AdStatus,
+    Category,
     Listing,
     ListingDetail,
     Location,
@@ -14,6 +15,7 @@ from kleinanzeigen.models import (
 
 __all__ = [
     "AdStatus",
+    "Category",
     "Kleinanzeigen",
     "KleinanzeigenError",
     "Listing",

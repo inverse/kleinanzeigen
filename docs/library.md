@@ -33,6 +33,7 @@ asyncio.run(main())
 | `search(params)` | `SearchResult` | Keyword search built from a `SearchParams` |
 | `iter_search(params)` | async iterator | Same as `search()`, yielding `(PageProgress, listings)` per page |
 | `get_listing(url_or_id)` | `ListingDetail \| None` | Full ad details, or `None` if the ad was removed |
+| `list_categories(query=None)` | `list[Category]` | Category IDs and paths; `query` filters by ID, name, or path |
 
 ## Search parameters
 
@@ -42,6 +43,7 @@ asyncio.run(main())
 | Field | Default | Description |
 | --- | --- | --- |
 | `query` | `None` | Search keywords |
+| `category` | `None` | Category id or name; parent categories include children |
 | `location` | `None` | City or district, e.g. `"Berlin"` or `"Mitte"` |
 | `radius` | `None` | Radius around `location`, in km |
 | `min_price`, `max_price` | `None` | Price bounds in EUR |
