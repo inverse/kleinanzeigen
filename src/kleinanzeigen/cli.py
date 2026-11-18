@@ -19,12 +19,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
-from kleinanzeigen import Kleinanzeigen
+from kleinanzeigen import Kleinanzeigen, KleinanzeigenError
 from kleinanzeigen._version import package_version
 from kleinanzeigen.client import PageProgress
-from kleinanzeigen.format import search_response_json
+from kleinanzeigen.format import category_list_json, search_response_json
 from kleinanzeigen.models import (
     AdStatus,
+    Category,
     Listing,
     ListingDetail,
     SearchParams,
@@ -148,6 +149,11 @@ def cli() -> None:
 @cli.command()
 @click.option("--query", "-q", required=True, help="Search query")
 @click.option(
+    "--category",
+    default=None,
+    help="Category id or name (e.g. '217' or 'Fahrräder & Zubehör')",
+)
+@click.option(
     "--location", "-l", default=None, help="Location (e.g. 'Berlin' or 'Mitte')"
 )
 @click.option("--radius", type=click.IntRange(min=0), default=None, help="Radius in km")
@@ -178,6 +184,7 @@ def cli() -> None:
 )
 def search(
     query: str,
+    category: str | None,
     location: str | None,
     radius: int | None,
     min_price: int | None,
@@ -192,6 +199,7 @@ def search(
     try:
         params = SearchParams(
             query=query,
+            category=category,
             location=location,
             radius=radius,
             min_price=min_price,
@@ -203,19 +211,23 @@ def search(
         )
     except ValidationError as exc:
         raise click.UsageError(exc.errors()[0]["msg"]) from exc
-    result = _run_iter_search(
-        params,
-        first_page=page,
-        pages=pages,
-        show_progress=not json_out,
-        published_after=params.published_after,
-    )
+    try:
+        result = _run_iter_search(
+            params,
+            first_page=page,
+            pages=pages,
+            show_progress=not json_out,
+            published_after=params.published_after,
+        )
+    except KleinanzeigenError as exc:
+        raise click.ClickException(str(exc)) from exc
     if json_out:
         click.echo(search_response_json(result))
         return
     _print_table(
         result,
         query=query,
+        category=category,
         location=location,
         radius=radius,
         min_price=min_price,
@@ -239,6 +251,31 @@ def get_cmd(url_or_id: str) -> None:
     console.print(_render_detail(detail))
 
 
+@cli.command("categories")
+@click.option("--query", "-q", default=None, help="Search by category name or path")
+@click.option("--json", "json_out", is_flag=True, help="Print JSON instead of a table")
+def categories(query: str | None, json_out: bool) -> None:
+    """List categories with IDs for search."""
+
+    async def run() -> list[Category]:
+        async with Kleinanzeigen() as ka:
+            return await ka.list_categories(query)
+
+    try:
+        result = asyncio.run(run())
+    except KleinanzeigenError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if json_out:
+        click.echo(category_list_json(result))
+        return
+    table = Table(title=f"Categories ({len(result)})")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Category")
+    for category in result:
+        table.add_row(category.id, category.path)
+    console.print(table)
+
+
 # Upstream published_at values are naive Europe/Berlin local time.
 UPSTREAM_TZ = ZoneInfo("Europe/Berlin")
 
@@ -247,6 +284,7 @@ def _print_table(
     result: SearchResult,
     *,
     query: str | None = None,
+    category: str | None = None,
     location: str | None = None,
     radius: int | None = None,
     min_price: int | None = None,
@@ -255,6 +293,8 @@ def _print_table(
     listings = result.listings
     if query is not None:
         parts = [f"'{escape(query)}'"]
+        if category:
+            parts.append(f"in category '{escape(category)}'")
         if location:
             parts.append(f"in '{escape(location)}'")
         if radius is not None:

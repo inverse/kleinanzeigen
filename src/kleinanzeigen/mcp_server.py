@@ -15,8 +15,12 @@ from pydantic import Field, PositiveInt
 
 from kleinanzeigen import Kleinanzeigen
 from kleinanzeigen._version import package_version
-from kleinanzeigen.format import ErrorResponse, SearchResponse, search_response
-from kleinanzeigen.models import ListingDetail, SearchParams, SortField
+from kleinanzeigen.format import (
+    ErrorResponse,
+    SearchResponse,
+    search_response,
+)
+from kleinanzeigen.models import Category, ListingDetail, SearchParams, SortField
 
 mcp = FastMCP(f"kleinanzeigen {package_version()}")
 
@@ -24,6 +28,7 @@ mcp = FastMCP(f"kleinanzeigen {package_version()}")
 @mcp.tool()
 async def search(
     query: str,
+    category: str | None = None,
     location: str | None = None,
     radius: Annotated[int | None, Field(ge=0)] = None,
     min_price: Annotated[int | None, Field(ge=0)] = None,
@@ -39,6 +44,8 @@ async def search(
 
     Args:
         query: Search keyword (e.g. "fahrrad", "iphone 13").
+        category: Category id or German name (e.g. "217" or
+            "Fahrräder & Zubehör"); parent categories include children.
         location: Location string (e.g. "Berlin" or "Mitte").
         radius: Search radius in km around the location.
         min_price: Minimum price in EUR.
@@ -54,6 +61,7 @@ async def search(
     """
     params = SearchParams(
         query=query,
+        category=category,
         location=location,
         radius=radius,
         min_price=min_price,
@@ -72,6 +80,13 @@ async def search(
     async with Kleinanzeigen() as ka:
         result = await ka.search(params, max_results=max_results)
     return search_response(result, limit=limit)
+
+
+@mcp.tool()
+async def list_categories(query: str | None = None) -> list[Category]:
+    """Find category IDs, names, and paths; empty query lists the full tree."""
+    async with Kleinanzeigen() as ka:
+        return await ka.list_categories(query)
 
 
 @mcp.tool()
