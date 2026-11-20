@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from mcp.server import MCPServer
+from mcp.types import ToolAnnotations
 from pydantic import Field, PositiveInt
 
 from kleinanzeigen import Kleinanzeigen
@@ -24,8 +25,15 @@ from kleinanzeigen.models import Category, ListingDetail, SearchParams, SortFiel
 
 mcp = MCPServer(f"kleinanzeigen {package_version()}")
 
+READ_ONLY = ToolAnnotations(
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=True,
+)
 
-@mcp.tool()
+
+@mcp.tool(annotations=READ_ONLY)
 async def search(
     query: str,
     category: str | None = None,
@@ -86,14 +94,14 @@ async def search(
     return search_response(result, limit=limit)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_categories(query: str | None = None) -> list[Category]:
     """Find category IDs, names, and paths; empty query lists the full tree."""
     async with Kleinanzeigen() as ka:
         return await ka.list_categories(query)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_listing(url_or_id: str) -> ListingDetail | ErrorResponse:
     """Fetch a single listing by URL or bare ad id.
 
