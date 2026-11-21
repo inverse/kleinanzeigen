@@ -7,6 +7,7 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)<br>
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://github.com/python/mypy)
 [![M8ven Score](https://m8ven.ai/badge/mcp/inverse-kleinanzeigen-hsg9h3?v=a8713f566b3315691f3db25a4c8701a4)](https://m8ven.ai/mcp/inverse-kleinanzeigen-hsg9h3?s=readme)
+[![codecov](https://codecov.io/gh/inverse/kleinanzeigen/graph/badge.svg?token=L95ZKUSN85)](https://codecov.io/gh/inverse/kleinanzeigen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Browse [kleinanzeigen.de](https://www.kleinanzeigen.de) listings from Python,
