@@ -35,7 +35,8 @@ Android JSON API using native async HTTPX. No browser.
   the same search/get operations to MCP clients. Tools return typed models
   (`SearchResponse`, `ListingDetail | ErrorResponse`) so FastMCP publishes
   concrete output schemas.
-- `tests/` — offline pytest suite (`test_mobile.py`, `test_cli.py`).
+- `tests/` — offline pytest suite (`test_mobile.py`, `test_cli.py`,
+  `test_mcp_server.py`).
 
 ## Setup
 
@@ -60,6 +61,9 @@ uv run pytest
 
 Config lives in `pyproject.toml` (`testpaths = ["tests"]`, `pythonpath = ["src"]`).
 Tests are offline — they use synthetic API payloads and disable network access.
+
+New code must be covered by tests when it makes sense - exercise new
+behavior branches, not wiring or echoes.
 
 ## Release
 
