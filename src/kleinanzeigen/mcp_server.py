@@ -47,15 +47,22 @@ async def _report_pages(
     ctx: Context,
     pages: AsyncIterator[tuple[PageProgress, list[Listing]]],
     params: SearchParams,
+    *,
+    exact_total: bool,
 ) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
-    """Report one progress step per fetched page; total is pages-to-fetch when known."""
+    """Report one progress step per fetched page.
+
+    ``total`` is only reported when the fetch count is known up front;
+    otherwise it stays unknown rather than over-counting pages that
+    ``collect_search_pages`` may never reach.
+    """
     done = 0
     async for progress, listings in pages:
         done += 1
         total = None
-        if progress.total_pages is not None:
+        if exact_total and progress.total_pages is not None:
             remaining = progress.total_pages - params.page + 1
-            total = min(params.pages, remaining) if params.pages > 0 else remaining
+            total = min(params.pages, remaining)
         await ctx.report_progress(done, total, f"page {progress.page}")
         yield progress, listings
 
@@ -118,6 +125,13 @@ async def search(
         exclude: Terms that must not appear in title/description.
         exclude_title_only: Apply exclude to the title only.
     """
+    try:
+        cutoff = datetime.fromisoformat(published_after) if published_after else None
+    except ValueError as exc:
+        raise ValueError(
+            "published_after must be an ISO 8601 date or datetime, "
+            f"got {published_after!r}"
+        ) from exc
     params = SearchParams(
         query=query,
         category=category,
@@ -127,9 +141,7 @@ async def search(
         max_price=max_price,
         page=page,
         pages=pages if pages is not None else (0 if max_results is not None else 1),
-        published_after=(
-            datetime.fromisoformat(published_after) if published_after else None
-        ),
+        published_after=cutoff,
         sort=sort,
         poster_type=poster_type,
         ad_type=ad_type,
@@ -141,9 +153,18 @@ async def search(
         exclude=exclude,
         exclude_title_only=exclude_title_only,
     )
+    # Paging can stop early on max_results, published_after, or a page that
+    # filters to empty; only a bounded fetch without those has a known total.
+    exact_total = (
+        params.pages > 0
+        and max_results is None
+        and params.published_after is None
+        and not params.require
+        and not params.exclude
+    )
     async with Kleinanzeigen() as ka:
         result = await ka.collect_search_pages(
-            _report_pages(ctx, ka.iter_search(params), params),
+            _report_pages(ctx, ka.iter_search(params), params, exact_total=exact_total),
             published_after=params.published_after,
             max_results=max_results,
         )

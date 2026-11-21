@@ -10,6 +10,7 @@ import pytest_socket
 from fastmcp.exceptions import ToolError, ValidationError
 
 from kleinanzeigen import mcp_server
+from kleinanzeigen.mobile import PageProgress
 from kleinanzeigen.models import (
     AdType,
     Listing,
@@ -133,3 +134,62 @@ def test_pages_default_to_one_without_max_results(
     params, max_results = fake_client.calls[0]
     assert params.pages == 1
     assert max_results is None
+
+
+def test_published_after_maps_to_datetime(fake_client: _FakeClient) -> None:
+    _call({"query": "bike", "published_after": "2026-11-01"})
+
+    params, _ = fake_client.calls[0]
+    assert params.published_after == datetime(2026, 11, 1)
+
+
+def test_invalid_published_after_is_rejected_before_search(
+    fake_client: _FakeClient,
+) -> None:
+    with pytest.raises((ToolError, ValidationError)):
+        _call({"query": "bike", "published_after": "yesterday"})
+
+    assert fake_client.calls == []
+
+
+class _ProgressCtx:
+    """Minimal stand-in for fastmcp.Context; records report_progress calls."""
+
+    def __init__(self) -> None:
+        self.reports: list[tuple[int, int | None]] = []
+
+    async def report_progress(
+        self, progress: int, total: int | None, message: str
+    ) -> None:
+        self.reports.append((progress, total))
+
+
+async def _reported_totals(exact_total: bool) -> list[tuple[int, int | None]]:
+    ctx = _ProgressCtx()
+    params = SearchParams(query="bike", page=1, pages=2)
+
+    async def pages() -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
+        yield PageProgress(1, 60, 3), []
+        yield PageProgress(2, 60, 3), []
+
+    async for _progress, _listings in mcp_server._report_pages(
+        ctx,
+        pages(),
+        params,
+        exact_total=exact_total,
+    ):
+        pass
+    return ctx.reports
+
+
+def test_report_pages_total_only_when_fetch_count_is_exact() -> None:
+    pytest_socket.enable_socket()
+    try:
+        exact = asyncio.run(_reported_totals(exact_total=True))
+        unknown = asyncio.run(_reported_totals(exact_total=False))
+    finally:
+        pytest_socket.disable_socket()
+
+    # page=1, pages=2, total_pages=3 -> exactly 2 pages will be fetched.
+    assert exact == [(1, 2), (2, 2)]
+    assert unknown == [(1, None), (2, None)]
