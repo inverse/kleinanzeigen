@@ -7,10 +7,11 @@ publishes concrete output schemas.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated
 
-from mcp.server import MCPServer
+from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field, PositiveInt
 
@@ -21,16 +22,18 @@ from kleinanzeigen.format import (
     SearchResponse,
     search_response,
 )
+from kleinanzeigen.mobile import PageProgress
 from kleinanzeigen.models import (
     AdType,
     Category,
+    Listing,
     ListingDetail,
     PosterType,
     SearchParams,
     SortField,
 )
 
-mcp = MCPServer(f"kleinanzeigen {package_version()}")
+mcp = FastMCP(f"kleinanzeigen {package_version()}")
 
 READ_ONLY = ToolAnnotations(
     read_only_hint=True,
@@ -40,8 +43,26 @@ READ_ONLY = ToolAnnotations(
 )
 
 
+async def _report_pages(
+    ctx: Context,
+    pages: AsyncIterator[tuple[PageProgress, list[Listing]]],
+    params: SearchParams,
+) -> AsyncIterator[tuple[PageProgress, list[Listing]]]:
+    """Report one progress step per fetched page; total is pages-to-fetch when known."""
+    done = 0
+    async for progress, listings in pages:
+        done += 1
+        total = None
+        if progress.total_pages is not None:
+            remaining = progress.total_pages - params.page + 1
+            total = min(params.pages, remaining) if params.pages > 0 else remaining
+        await ctx.report_progress(done, total, f"page {progress.page}")
+        yield progress, listings
+
+
 @mcp.tool(annotations=READ_ONLY)
 async def search(
+    ctx: Context,
     query: str,
     category: str | None = None,
     location: str | None = None,
@@ -121,7 +142,11 @@ async def search(
         exclude_title_only=exclude_title_only,
     )
     async with Kleinanzeigen() as ka:
-        result = await ka.search(params, max_results=max_results)
+        result = await ka.collect_search_pages(
+            _report_pages(ctx, ka.iter_search(params), params),
+            published_after=params.published_after,
+            max_results=max_results,
+        )
     return search_response(result, limit=limit)
 
 

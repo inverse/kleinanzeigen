@@ -22,6 +22,7 @@ repos:
       - pydantic>=2.14.3
       - httpx>=0.28.1
       - mcp>=2.3.0
+      - fastmcp>=4.2.4
       - click>=8.5.1
       - humanize>=4.17.0
       - rich>=15.0.0

@@ -1,12 +1,13 @@
 """Tests for the MCP search tool: argument validation and request mapping — no network."""
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from datetime import datetime
 from typing import Any, Self
 
 import pytest
 import pytest_socket
-from mcp.server.mcpserver.exceptions import ToolError
+from fastmcp.exceptions import ToolError, ValidationError
 
 from kleinanzeigen import mcp_server
 from kleinanzeigen.models import (
@@ -20,10 +21,11 @@ from kleinanzeigen.models import (
 
 
 class _FakeClient:
-    """Stands in for ``Kleinanzeigen``; records the params the tool built."""
+    """Stands in for ``Kleinanzeigen``; records the params and max_results the tool built."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.calls: list[tuple[SearchParams, int | None]] = []
+        self._params: SearchParams | None = None
 
     async def __aenter__(self) -> Self:
         return self
@@ -31,10 +33,24 @@ class _FakeClient:
     async def __aexit__(self, *exc: object) -> None:
         return None
 
-    async def search(
-        self, params: SearchParams, *, max_results: int | None = None
+    def iter_search(self, params: SearchParams) -> AsyncIterator[Any]:
+        self._params = params
+
+        async def _no_pages() -> AsyncIterator[Any]:
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+        return _no_pages()
+
+    async def collect_search_pages(
+        self,
+        pages: AsyncIterator[Any],
+        *,
+        published_after: datetime | None = None,
+        max_results: int | None = None,
     ) -> SearchResult:
-        self.calls.append((params, max_results))
+        assert self._params is not None
+        self.calls.append((self._params, max_results))
         listing = Listing(
             ad_id="1",
             url="https://www.kleinanzeigen.de/s-anzeige/x/1",
@@ -93,7 +109,7 @@ def test_ad_type_defaults_to_offered(fake_client: _FakeClient) -> None:
 def test_invalid_enum_value_is_rejected_before_search(
     fake_client: _FakeClient,
 ) -> None:
-    with pytest.raises(ToolError):
+    with pytest.raises((ToolError, ValidationError)):
         _call({"query": "bike", "sort": "cheapest"})
 
     assert fake_client.calls == []
