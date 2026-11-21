@@ -20,7 +20,7 @@ from kleinanzeigen.mobile import (
     iter_search,
     resolve_category_id,
 )
-from kleinanzeigen.models import AdStatus, SearchParams, SortField
+from kleinanzeigen.models import AdStatus, AdType, PosterType, SearchParams, SortField
 
 
 def _val(x):
@@ -122,6 +122,41 @@ def test_search_params_default_to_newest():
     request = _search_params(SearchParams(query="x"), None, None)
     assert request["sortType"] == "DATE_DESCENDING"
     assert request["page"] == 0
+
+
+def test_search_params_extended_filters():
+    request = _search_params(
+        SearchParams(
+            query="x",
+            poster_type=PosterType.COMMERCIAL,
+            ad_type=AdType.WANTED,
+            picture_required=True,
+            shippable=True,
+            buy_now_only=True,
+            include_top_ads=False,
+        ),
+        None,
+        None,
+    )
+    assert request["posterType"] == "COMMERCIAL"
+    assert request["adType"] == "WANTED"
+    assert request["pictureRequired"] == "true"
+    assert request["shippable"] == "true"
+    assert request["buyNowOnly"] == "true"
+    assert request["includeTopAds"] == "false"
+
+
+def test_search_params_default_omits_new_filters():
+    request = _search_params(SearchParams(query="x"), None, None)
+    assert request["adType"] == "OFFERED"
+    for key in (
+        "posterType",
+        "pictureRequired",
+        "shippable",
+        "buyNowOnly",
+        "includeTopAds",
+    ):
+        assert key not in request
 
 
 def test_search_params_include_category_id():
@@ -367,3 +402,63 @@ def test_list_categories_returns_full_tree_for_empty_query(
     session, _ = categories_session
     ids = [c.id for c in _run(mobile.list_categories(session, None, max_retries=0))]
     assert ids == ["210", "217", "216"]
+
+
+def test_listing_from_ad_flags_images_and_top_ad():
+    ad = _ad(
+        pictures={
+            "picture": [{"link": [{"rel": "large", "href": "https://img/x.jpg"}]}]
+        },
+        **{"features-active": {"feature-active": [{"name": _val("TOPAD")}]}},
+    )
+    listing = _listing_from_ad(ad)
+    assert listing.has_images is True
+    assert listing.is_top_ad is True
+
+
+def test_iter_search_require_exclude_terms(categories_session, clean_category_cache):
+    session, _ = categories_session
+
+    async def drain(params):
+        out = []
+        async for _progress, listings in iter_search(
+            session, params, page_delay=0, max_retries=0
+        ):
+            out.extend(listings)
+        return out
+
+    # The fixture ad's title contains "Shimano" and its description "Privatverkauf".
+    assert _run(drain(SearchParams(query="x", require=["shimano"]))) != []
+    assert (
+        _run(drain(SearchParams(query="x", require=["fahrrad", "privatverkauf"]))) != []
+    )
+    assert _run(drain(SearchParams(query="x", require=["velo"]))) == []
+    assert _run(drain(SearchParams(query="x", exclude=["shimano"]))) == []
+    assert _run(drain(SearchParams(query="x", exclude=["privat"]))) == []
+
+
+def test_iter_search_exclude_title_only(categories_session, clean_category_cache):
+    session, _ = categories_session
+
+    async def drain(params):
+        out = []
+        async for _progress, listings in iter_search(
+            session, params, page_delay=0, max_retries=0
+        ):
+            out.extend(listings)
+        return out
+
+    # "Privatverkauf" appears only in the description, so title-only exclusion keeps it.
+    assert (
+        _run(
+            drain(SearchParams(query="x", exclude=["privat"], exclude_title_only=True))
+        )
+        != []
+    )
+    # but "Shimano" is in the title, so it is dropped.
+    assert (
+        _run(
+            drain(SearchParams(query="x", exclude=["shimano"], exclude_title_only=True))
+        )
+        == []
+    )

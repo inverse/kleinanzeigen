@@ -16,10 +16,12 @@ Android JSON API using native async HTTPX. No browser.
   names to `locationId` via `/api/locations.json`. Pagination delays and retry
   policy live here.
 - `src/kleinanzeigen/models.py` — frozen pydantic models: `SearchParams`
-  (validated request: page/pages/price bounds/sort), `SortField`, `Listing`,
-  `ListingDetail`, `SearchResult`, `Price`, `Seller`, `Location`, `AdStatus`.
-  Upstream
-  `published_at` is naive Europe/Berlin local time.
+  (validated request: page/pages/price bounds/sort plus poster_type, ad_type,
+  picture_required/shippable/buy_now_only flags, include_top_ads toggle and
+  require/exclude term filters), `SortField`, `PosterType`, `AdType`, `Listing`
+  (is_top_ad, has_images), `ListingDetail`, `SearchResult`, `Price`, `Seller`,
+  `Location`, `AdStatus`. Upstream `published_at` is naive Europe/Berlin local
+  time.
 - `src/kleinanzeigen/format.py` — typed JSON response boundary shared by CLI
   and MCP: `SearchResponse` (envelope with `returned` after a response-level
   `limit`), `ErrorResponse`, `search_response*()`. Responses embed core

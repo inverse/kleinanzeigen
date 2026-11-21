@@ -25,10 +25,12 @@ import httpx
 
 from kleinanzeigen.models import (
     AdStatus,
+    AdType,
     Category,
     Listing,
     ListingDetail,
     Location,
+    PosterType,
     Price,
     SearchParams,
     Seller,
@@ -67,6 +69,9 @@ _SORT_TYPES = {
     SortField.PRICE_DESC: "PRICE_DESCENDING",
     SortField.DISTANCE: "DISTANCE_ASCENDING",
 }
+
+_POSTER_TYPES = {PosterType.PRIVATE: "PRIVATE", PosterType.COMMERCIAL: "COMMERCIAL"}
+_AD_TYPES = {AdType.OFFERED: "OFFERED", AdType.WANTED: "WANTED"}
 
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -387,7 +392,14 @@ def _listing_from_ad(ad: dict[str, Any]) -> Listing | None:
         distance_km=distance,
         description=" ".join(description.split()),
         published_at=_parse_published_at(ad.get("start-date-time")),
-        is_top_ad=False,
+        is_top_ad=any(
+            str(_val(feature.get("name")) or "").upper() == "TOPAD"
+            for feature in _as_list(
+                (ad.get("features-active") or {}).get("feature-active")
+            )
+            if isinstance(feature, dict)
+        ),
+        has_images=bool(_as_list((ad.get("pictures") or {}).get("picture"))),
     )
 
 
@@ -554,7 +566,32 @@ def _search_params(
         p["minPrice"] = params.min_price
     if params.max_price is not None:
         p["maxPrice"] = params.max_price
+    if params.poster_type is not None:
+        p["posterType"] = _POSTER_TYPES[params.poster_type]
+    p["adType"] = _AD_TYPES[params.ad_type]
+    if params.picture_required:
+        p["pictureRequired"] = "true"
+    if params.shippable:
+        p["shippable"] = "true"
+    if params.buy_now_only:
+        p["buyNowOnly"] = "true"
+    if not params.include_top_ads:
+        p["includeTopAds"] = "false"
     return p
+
+
+def _matches_terms(listing: Listing, params: SearchParams) -> bool:
+    """Client-side require/exclude filter over title and description."""
+    haystack = f"{listing.title}\n{listing.description}".casefold()
+    title = listing.title.casefold()
+    for term in params.require or []:
+        if term.casefold() not in haystack:
+            return False
+    scope = title if params.exclude_title_only else haystack
+    for term in params.exclude or []:
+        if term.casefold() in scope:
+            return False
+    return True
 
 
 async def iter_search(
@@ -622,11 +659,14 @@ async def iter_search(
         if total_results is not None and total_pages is None:
             total_pages = -(-int(total_results) // PAGE_SIZE)
 
-        listings = [
-            listing
-            for ad in _as_list(value.get("ad"))
-            if isinstance(ad, dict) and (listing := _listing_from_ad(ad)) is not None
-        ]
+        listings = []
+        for ad in _as_list(value.get("ad")):
+            if not isinstance(ad, dict):
+                continue
+            listing = _listing_from_ad(ad)
+            if listing is None or not _matches_terms(listing, params):
+                continue
+            listings.append(listing)
         yield PageProgress(api_page + 1, total_results, total_pages), listings
         if not listings:
             break

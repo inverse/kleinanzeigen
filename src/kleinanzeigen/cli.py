@@ -25,9 +25,11 @@ from kleinanzeigen.client import PageProgress
 from kleinanzeigen.format import category_list_json, search_response_json
 from kleinanzeigen.models import (
     AdStatus,
+    AdType,
     Category,
     Listing,
     ListingDetail,
+    PosterType,
     SearchParams,
     SearchResult,
     SortField,
@@ -62,12 +64,7 @@ class _WorkerOut(TypedDict, total=False):
 
 
 def _run_iter_search(
-    query: SearchParams,
-    *,
-    first_page: int = 1,
-    pages: int = 0,
-    show_progress: bool = True,
-    published_after: datetime | None = None,
+    query: SearchParams, *, show_progress: bool = True
 ) -> SearchResult:
     """Consume a search-page iterator on a worker thread.
 
@@ -91,7 +88,7 @@ def _run_iter_search(
                 async with Kleinanzeigen() as ka:
                     pages_iter = _tee(ka.iter_search(query))
                     return await Kleinanzeigen.collect_search_pages(
-                        pages_iter, published_after=published_after
+                        pages_iter, published_after=query.published_after
                     )
 
             out["result"] = asyncio.run(run())
@@ -113,11 +110,11 @@ def _run_iter_search(
             item = progress_q.get()
             if item is None:
                 break
-            fetched = item.page - first_page + 1
+            fetched = item.page - query.page + 1
             total_pages = item.total_pages
             total = (
-                min(total_pages, first_page + pages - 1)
-                if total_pages is not None and pages > 0
+                min(total_pages, query.page + query.pages - 1)
+                if total_pages is not None and query.pages > 0
                 else total_pages
             )
             if total:
@@ -125,11 +122,11 @@ def _run_iter_search(
                     description = f"Fetched {fetched} of {total} pages..."
                 else:
                     description = (
-                        f"Fetching pages {first_page}-{item.page} of {total}..."
+                        f"Fetching pages {query.page}-{item.page} of {total}..."
                     )
             else:
                 description = (
-                    f"Fetching pages {first_page}-{item.page}..."
+                    f"Fetching pages {query.page}-{item.page}..."
                     if fetched > 1
                     else f"Fetching page {item.page}..."
                 )
@@ -182,6 +179,37 @@ def cli() -> None:
     default=None,
     help="Server-side sort: newest, price_asc, price_desc, distance",
 )
+@click.option(
+    "--poster-type",
+    type=click.Choice([f.value for f in PosterType]),
+    default=None,
+    help="Seller type: private or commercial",
+)
+@click.option(
+    "--ad-type",
+    type=click.Choice([f.value for f in AdType]),
+    default="offered",
+    help="Listing direction: offered (for sale, default) or wanted (sought)",
+)
+@click.option("--picture-required", is_flag=True, help="Only ads with photos")
+@click.option("--shippable", is_flag=True, help="Only ads offering shipping")
+@click.option("--buy-now", is_flag=True, help="Only ads with Buy Now")
+@click.option("--no-top-ads", is_flag=True, help="Exclude highlighted top ads")
+@click.option(
+    "--require",
+    multiple=True,
+    help="Term that must appear in title/description (repeatable)",
+)
+@click.option(
+    "--exclude",
+    multiple=True,
+    help="Term to exclude from title/description (repeatable)",
+)
+@click.option(
+    "--exclude-title-only",
+    is_flag=True,
+    help="Apply --exclude to the title only",
+)
 def search(
     query: str,
     category: str | None,
@@ -194,6 +222,15 @@ def search(
     json_out: bool,
     published_after: datetime | None,
     sort: str | None,
+    poster_type: str | None,
+    ad_type: str,
+    picture_required: bool,
+    shippable: bool,
+    buy_now: bool,
+    no_top_ads: bool,
+    require: tuple[str, ...],
+    exclude: tuple[str, ...],
+    exclude_title_only: bool,
 ) -> None:
     """Keyword search."""
     try:
@@ -208,17 +245,20 @@ def search(
             pages=pages,
             published_after=published_after,
             sort=SortField(sort) if sort else None,
+            poster_type=PosterType(poster_type) if poster_type else None,
+            ad_type=AdType(ad_type),
+            picture_required=picture_required,
+            shippable=shippable,
+            buy_now_only=buy_now,
+            include_top_ads=not no_top_ads,
+            require=list(require),
+            exclude=list(exclude),
+            exclude_title_only=exclude_title_only,
         )
     except ValidationError as exc:
         raise click.UsageError(exc.errors()[0]["msg"]) from exc
     try:
-        result = _run_iter_search(
-            params,
-            first_page=page,
-            pages=pages,
-            show_progress=not json_out,
-            published_after=params.published_after,
-        )
+        result = _run_iter_search(params, show_progress=not json_out)
     except KleinanzeigenError as exc:
         raise click.ClickException(str(exc)) from exc
     if json_out:
