@@ -26,6 +26,20 @@ class SortField(StrEnum):
     DISTANCE = "distance"
 
 
+class PosterType(StrEnum):
+    """Seller type filter: ``PRIVATE`` = private, ``COMMERCIAL`` = business."""
+
+    PRIVATE = "private"
+    COMMERCIAL = "commercial"
+
+
+class AdType(StrEnum):
+    """Listing direction: ``OFFERED`` = for sale, ``WANTED`` = sought."""
+
+    OFFERED = "offered"
+    WANTED = "wanted"
+
+
 class _FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -49,6 +63,11 @@ class SearchParams(_FrozenModel):
     ``category`` is a numeric API id, a German category name, or a full path
     from ``Kleinanzeigen.list_categories()``. Names and paths ignore case.
 
+    ``require`` and ``exclude`` are case-insensitive substring matches over
+    the listing title and description (``exclude_title_only`` restricts the
+    exclusion to the title). A listing must contain every ``require`` term
+    and no ``exclude`` term.
+
     Upstream ``published_at`` values are naive Europe/Berlin local time, so a
     naive ``published_after`` is compared in that zone. Passing an aware
     datetime compares across zones normally.
@@ -64,6 +83,15 @@ class SearchParams(_FrozenModel):
     pages: Annotated[int, Field(ge=0)] = 1  # 0 = all pages
     sort: SortField | None = None
     published_after: datetime | None = None
+    poster_type: PosterType | None = None
+    ad_type: AdType = AdType.OFFERED
+    picture_required: bool = False
+    shippable: bool = False
+    buy_now_only: bool = False
+    include_top_ads: bool = True
+    require: list[str] | None = None
+    exclude: list[str] | None = None
+    exclude_title_only: bool = False
 
     @model_validator(mode="after")
     def _check_price_range(self) -> Self:
@@ -96,6 +124,7 @@ class Listing(_FrozenModel):
     description: str
     published_at: datetime | None
     is_top_ad: bool
+    has_images: bool = False
 
 
 class SearchResult(_FrozenModel):

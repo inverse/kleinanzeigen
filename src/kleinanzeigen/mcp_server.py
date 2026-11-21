@@ -8,7 +8,7 @@ publishes concrete output schemas.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
@@ -21,7 +21,14 @@ from kleinanzeigen.format import (
     SearchResponse,
     search_response,
 )
-from kleinanzeigen.models import Category, ListingDetail, SearchParams, SortField
+from kleinanzeigen.models import (
+    AdType,
+    Category,
+    ListingDetail,
+    PosterType,
+    SearchParams,
+    SortField,
+)
 
 mcp = MCPServer(f"kleinanzeigen {package_version()}")
 
@@ -45,8 +52,17 @@ async def search(
     pages: Annotated[int | None, Field(ge=0)] = None,
     published_after: str | None = None,
     max_results: PositiveInt | None = None,
-    sort: Literal["newest", "price_asc", "price_desc", "distance"] | None = None,
+    sort: SortField | None = None,
     limit: PositiveInt | None = None,
+    poster_type: PosterType | None = None,
+    ad_type: AdType = AdType.OFFERED,
+    picture_required: bool = False,
+    shippable: bool = False,
+    buy_now_only: bool = False,
+    include_top_ads: bool = True,
+    require: list[str] | None = None,
+    exclude: list[str] | None = None,
+    exclude_title_only: bool = False,
 ) -> SearchResponse:
     """Search kleinanzeigen.de for listings matching a keyword query.
 
@@ -70,6 +86,16 @@ async def search(
             collected. With pages unset this also enables paging past page 1.
         sort: Server-side result ordering.
         limit: Cap the number of returned listings.
+        poster_type: Filter by seller type ("private" or "commercial").
+        ad_type: "offered" (for sale, default) or "wanted" (sought).
+        picture_required: Only ads with photos.
+        shippable: Only ads offering shipping.
+        buy_now_only: Only ads with Buy Now.
+        include_top_ads: Include highlighted top ads (default true; currently
+            a no-op upstream — the mobile API returns none on page 1).
+        require: Terms that must appear in the title or description.
+        exclude: Terms that must not appear in title/description.
+        exclude_title_only: Apply exclude to the title only.
     """
     params = SearchParams(
         query=query,
@@ -79,15 +105,20 @@ async def search(
         min_price=min_price,
         max_price=max_price,
         page=page,
-        pages=(
-            0
-            if pages is None and max_results is not None
-            else (1 if pages is None else pages)
-        ),
+        pages=pages if pages is not None else (0 if max_results is not None else 1),
         published_after=(
             datetime.fromisoformat(published_after) if published_after else None
         ),
-        sort=SortField(sort) if sort else None,
+        sort=sort,
+        poster_type=poster_type,
+        ad_type=ad_type,
+        picture_required=picture_required,
+        shippable=shippable,
+        buy_now_only=buy_now_only,
+        include_top_ads=include_top_ads,
+        require=require,
+        exclude=exclude,
+        exclude_title_only=exclude_title_only,
     )
     async with Kleinanzeigen() as ka:
         result = await ka.search(params, max_results=max_results)
