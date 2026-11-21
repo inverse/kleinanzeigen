@@ -104,11 +104,12 @@ async def _get_json(
     url: str,
     params: dict[str, Any],
     *,
-    xapp: str,
+    xapp: str | None = None,
     max_retries: int,
     allow_missing: bool = False,
 ) -> Any:
     """GET -> parsed JSON. Retries on transport errors and 429/5xx."""
+    xapp = xapp or _xapp()
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -159,20 +160,22 @@ def _best_location(candidates: list[tuple[str, str]], query: str) -> str | None:
     q = query.strip().lower()
     if not candidates:
         return None
+    heads = [
+        (lid, label.split(" - ")[0].split(" (")[0].strip().lower())
+        for lid, label in candidates
+    ]
     # Exact head match beats substring matches ("Berlin" over "Charlottenburg (Berlin)").
-    for lid, label in candidates:
-        head = label.split(" - ")[0].split(" (")[0].strip().lower()
+    for lid, head in heads:
         if head == q:
             return lid
-    for lid, label in candidates:
-        head = label.split(" - ")[0].split(" (")[0].strip().lower()
+    for lid, head in heads:
         if head.startswith(q):
             return lid
     return candidates[0][0]
 
 
 async def resolve_location_id(
-    session: httpx.AsyncClient, query: str, *, xapp: str, max_retries: int
+    session: httpx.AsyncClient, query: str, *, xapp: str | None = None, max_retries: int
 ) -> str | None:
     """Place name/PLZ -> mobile API location id, or None when unresolvable."""
     if query.strip().isdigit():
@@ -231,7 +234,7 @@ _CATEGORY_CACHE: tuple[Category, ...] | None = None
 
 
 async def _load_categories(
-    session: httpx.AsyncClient, *, xapp: str, max_retries: int
+    session: httpx.AsyncClient, *, xapp: str | None = None, max_retries: int
 ) -> tuple[Category, ...]:
     global _CATEGORY_CACHE
     if _CATEGORY_CACHE is None:
@@ -256,7 +259,7 @@ async def _load_categories(
 async def list_categories(
     session: httpx.AsyncClient, query: str | None, *, max_retries: int
 ) -> list[Category]:
-    categories = await _load_categories(session, xapp=_xapp(), max_retries=max_retries)
+    categories = await _load_categories(session, max_retries=max_retries)
     q = (query or "").strip().casefold().translate(_UMLAUTS)
     if q.isascii() and q.isdigit():
         return [category for category in categories if category.id == q]
@@ -268,7 +271,7 @@ async def list_categories(
 
 
 async def resolve_category_id(
-    session: httpx.AsyncClient, query: str, *, xapp: str, max_retries: int
+    session: httpx.AsyncClient, query: str, *, xapp: str | None = None, max_retries: int
 ) -> str | None:
     """Resolve an id or an unambiguous name, path, or single-word shorthand."""
     q = query.strip().casefold()
@@ -342,6 +345,23 @@ def _label(node: Any) -> str:
     )
 
 
+def _ad_id(ad: dict[str, Any], links: dict[str, str]) -> str:
+    return (
+        str(ad.get("id") or "") or links.get("self", "").rstrip("/").rsplit("/", 1)[-1]
+    )
+
+
+def _ad_amount(price_node: dict[str, Any]) -> Decimal | None:
+    # FREE/RANGE price-types carry no single amount; web cards show none either.
+    if _val(price_node.get("price-type")) in ("FREE", "RANGE"):
+        return None
+    return _parse_amount(price_node.get("amount"))
+
+
+def _ad_title(ad: dict[str, Any]) -> str:
+    return unescape(str(_val(ad.get("title")) or "")).strip()
+
+
 def _listing_location(ad: dict[str, Any]) -> str:
     """'PLZ City' from locations or ad-address."""
     locations = ad.get("locations") or {}
@@ -357,20 +377,12 @@ def _listing_location(ad: dict[str, Any]) -> str:
 
 
 def _listing_from_ad(ad: dict[str, Any]) -> Listing | None:
-    ad_id = str(ad.get("id") or "")
     links = _links(ad)
-    if not ad_id:
-        self_href = links.get("self", "")
-        ad_id = self_href.rstrip("/").rsplit("/", 1)[-1]
+    ad_id = _ad_id(ad, links)
     if not ad_id:
         return None
 
-    price = ad.get("price") or {}
-    # FREE/RANGE price-types carry no single amount; web cards show none either.
-    price_type = _val(price.get("price-type"))
-    amount = (
-        None if price_type in ("FREE", "RANGE") else _parse_amount(price.get("amount"))
-    )
+    amount = _ad_amount(ad.get("price") or {})
 
     distance = None
     sd = ad.get("search-distance") or {}
@@ -386,7 +398,7 @@ def _listing_from_ad(ad: dict[str, Any]) -> Listing | None:
     return Listing(
         ad_id=ad_id,
         url=links.get("self-public-website") or links.get("self") or "",
-        title=unescape(str(_val(ad.get("title")) or "")).strip(),
+        title=_ad_title(ad),
         price=amount,
         location=_listing_location(ad),
         distance_km=distance,
@@ -467,17 +479,11 @@ def _detail_from_ad(
     ad: dict[str, Any], *, scraped_at: datetime | None
 ) -> ListingDetail:
     links = _links(ad)
-    ad_id = str(ad.get("id") or "")
-    if not ad_id:
-        ad_id = links.get("self", "").rstrip("/").rsplit("/", 1)[-1]
+    ad_id = _ad_id(ad, links)
 
     price_node = ad.get("price") or {}
     price_type = _val(price_node.get("price-type"))
-    amount = (
-        None
-        if price_type in ("FREE", "RANGE")
-        else _parse_amount(price_node.get("amount"))
-    )
+    amount = _ad_amount(price_node)
     shipping = ad.get("shipping-options")
     delivery: Literal["pickup", "shipping"] | None = None
     if shipping is not None:
@@ -494,7 +500,7 @@ def _detail_from_ad(
     return ListingDetail(
         ad_id=ad_id,
         url=links.get("self-public-website") or links.get("self") or "",
-        title=unescape(str(_val(ad.get("title")) or "")).strip(),
+        title=_ad_title(ad),
         status=AdStatus(status),
         price=Price(amount=amount, negotiable=price_type == "PLEASE_CONTACT"),
         categories=[str(category_name)] if category_name else [],
@@ -533,7 +539,6 @@ async def get_listing(
         session,
         f"{API_HOST}/api/ads/{ad_id}.json",
         {},
-        xapp=_xapp(),
         max_retries=max_retries,
         allow_missing=True,
     )
@@ -594,6 +599,34 @@ def _matches_terms(listing: Listing, params: SearchParams) -> bool:
     return True
 
 
+def _parse_search_page(
+    data: Any, params: SearchParams
+) -> tuple[int | None, list[Listing]]:
+    """One /api/ads.json page -> (total_results, matching listings)."""
+    block = data.get(ADS_NS, {})
+    value = block.get("value") if isinstance(block, dict) else None
+    if not isinstance(value, dict):
+        return None, []
+
+    total_results = _val((value.get("paging") or {}).get("numFound"))
+    if isinstance(total_results, str):
+        try:
+            total_results = int(total_results)
+        except ValueError:
+            total_results = None
+    if not isinstance(total_results, int):
+        total_results = None
+
+    listings = [
+        listing
+        for ad in _as_list(value.get("ad"))
+        if isinstance(ad, dict)
+        and (listing := _listing_from_ad(ad)) is not None
+        and _matches_terms(listing, params)
+    ]
+    return total_results, listings
+
+
 async def iter_search(
     session: httpx.AsyncClient,
     params: SearchParams,
@@ -645,28 +678,9 @@ async def iter_search(
             xapp=xapp,
             max_retries=max_retries,
         )
-        block = data.get(ADS_NS, {})
-        value = block.get("value", {}) if isinstance(block, dict) else {}
-        if not isinstance(value, dict):
-            value = {}
-        paging = value.get("paging", {})
-        total_results = _val(paging.get("numFound"))
-        if isinstance(total_results, str):
-            try:
-                total_results = int(total_results)
-            except ValueError:
-                total_results = None
+        total_results, listings = _parse_search_page(data, params)
         if total_results is not None and total_pages is None:
             total_pages = -(-int(total_results) // PAGE_SIZE)
-
-        listings = []
-        for ad in _as_list(value.get("ad")):
-            if not isinstance(ad, dict):
-                continue
-            listing = _listing_from_ad(ad)
-            if listing is None or not _matches_terms(listing, params):
-                continue
-            listings.append(listing)
         yield PageProgress(api_page + 1, total_results, total_pages), listings
         if not listings:
             break

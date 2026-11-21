@@ -13,12 +13,15 @@ from kleinanzeigen.client import Kleinanzeigen
 from kleinanzeigen.mobile import (
     AD_NS,
     ADS_NS,
+    LOCATIONS_NS,
+    _best_location,
     _detail_from_ad,
     _listing_from_ad,
     _parse_published_at,
     _search_params,
     iter_search,
     resolve_category_id,
+    resolve_location_id,
 )
 from kleinanzeigen.models import AdStatus, AdType, PosterType, SearchParams, SortField
 
@@ -402,6 +405,61 @@ def test_list_categories_returns_full_tree_for_empty_query(
     session, _ = categories_session
     ids = [c.id for c in _run(mobile.list_categories(session, None, max_retries=0))]
     assert ids == ["210", "217", "216"]
+
+
+@pytest.fixture
+def locations_session():
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        tree = {
+            "location": [
+                {"id": "1", "localized-name": _val("Charlottenburg (Berlin)")},
+                {"id": "2"},  # no usable label: skipped
+                {
+                    "id": "3",
+                    "localized-name": _val("Berlin"),
+                    "location": [
+                        {"id": "4", "localized-name": _val("Bergheim - Paffendorf")}
+                    ],
+                },
+                "garbage-node",  # non-dict: skipped by _flatten_locations
+            ]
+        }
+        return httpx.Response(200, json={LOCATIONS_NS: {"value": tree}})
+
+    session = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=30)
+    yield session, requests
+    _run(session.aclose())
+
+
+def test_resolve_location_id_numeric_passthrough(locations_session):
+    session, requests = locations_session
+    assert _run(resolve_location_id(session, " 10115 ", max_retries=0)) == "10115"
+    assert requests == []
+
+
+def test_resolve_location_id_exact_beats_substring(locations_session):
+    session, _ = locations_session
+    # "Charlottenburg (Berlin)" sorts first but only matches as substring;
+    # the exact "Berlin" node and its child both win over it.
+    assert _run(resolve_location_id(session, "berlin", max_retries=0)) == "3"
+
+
+def test_resolve_location_id_head_prefix(locations_session):
+    session, _ = locations_session
+    # "berg" is no exact head match but prefixes "Bergheim - Paffendorf" -> id 4.
+    assert _run(resolve_location_id(session, "berg", max_retries=0)) == "4"
+
+
+def test_resolve_location_id_falls_back_to_first(locations_session):
+    session, _ = locations_session
+    assert _run(resolve_location_id(session, "nirgendwo", max_retries=0)) == "1"
+
+
+def test_best_location_empty_candidates():
+    assert _best_location([], "berlin") is None
 
 
 def test_listing_from_ad_flags_images_and_top_ad():
